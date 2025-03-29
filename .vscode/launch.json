@@ -1,0 +1,37 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Server",
+            "consoleTitle": "Server",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/server.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--port", "502"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "Debug Client",
+            "consoleTitle": "Client",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/client.py",
+            "console": "integratedTerminal",
+            "args": [
+                "127.0.0.1",
+                "--port", "502",
+                "--retries", "999"
+            ],
+            "justMyCode": false
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Debug Server and Client",
+            "configurations": ["Debug Server", "Debug Client"]
+        }
+    ]
+}

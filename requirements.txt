@@ -1,0 +1,4 @@
+argparse
+pymodbus
+pysunspec2
+pyserial
