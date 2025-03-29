@@ -1,7 +1,20 @@
 import argparse
+import logging
 import time
-from sunspec2.modbus.client import SunSpecModbusClientDeviceTCP, SunSpecModbusClientModel
+
+from sunspec2.modbus.client import (
+    SunSpecModbusClientDeviceTCP,
+    SunSpecModbusClientModel,
+)
 from sunspec2.modbus.modbus import ModbusClientTimeout
+
+# Configure the logger
+logging.basicConfig(
+    level=logging.DEBUG,  # Set the logging level to DEBUG
+    format="%(asctime)s - %(levelname)s - %(message)s",  # Log format
+    datefmt="%Y-%m-%d %H:%M:%S",  # Date format
+)
+log = logging.getLogger(__name__)  # Create a logger instance
 
 
 def read_sunspec_inverter(ip, port=502, retries=3, delay=2):
@@ -18,7 +31,7 @@ def read_sunspec_inverter(ip, port=502, retries=3, delay=2):
             device.base_addr_list = [40000]
             device.scan()
             if not device.models:
-                print("No SunSpec models found on the device.")
+                log.error("No SunSpec models found on the device.")
                 return
 
             # Access the Common Block (Model 1)
@@ -29,32 +42,42 @@ def read_sunspec_inverter(ip, port=502, retries=3, delay=2):
 
             manufacturer = common_model.get_dict().get("Mn", None)  # Manufacturer
             if not manufacturer:
-                print("Device is not SunSpec-compliant.")
+                log.error("Device is not SunSpec-compliant.")
                 return
-            print(f"SunSpec Manufacturer: {manufacturer}")
+            log.debug(f"SunSpec Manufacturer: {manufacturer}")
 
             # Access the Inverter Model Block (Model 101)
             inverter_model = device.models.get(113)[0]
             if not inverter_model:
-                print("SunSpec Inverter Block (Model 113) not found.")
+                log.error("SunSpec Inverter Block (Model 113) not found.")
                 return
             if inverter_model.model.error_info:
-                print(f"Error in model 113: {inverter_model.model.error_info}")
-            
-            print(inverter_model.model.get_dict())
+                log.warning(f"Error in model 113: {inverter_model.model.error_info}")
 
-            print("Raw Inverter Model Data:")
+            log.debug("Raw Inverter Model Data:")
             for point_name, point in inverter_model.points.items():
-                  print(f"{point_name}: {point.value} (type: {type(point.value)})")
+                log.debug(f"{point_name}: {point.value} (type: {type(point.value)})")
 
             # Decode some example fields from the Inverter Model
-            ac_power = inverter_model.points.get("W").value if "W" in inverter_model.points else None  # AC Power (W)
-            dc_power = inverter_model.points.get("DCW").value if "DCW" in inverter_model.points else None  # DC Power (W)
-            status = inverter_model.points.get("St").value if "St" in inverter_model.points else None  # Operating State
+            ac_power = (
+                inverter_model.points.get("W").value
+                if "W" in inverter_model.points
+                else None
+            )  # AC Power (W)
+            dc_power = (
+                inverter_model.points.get("DCW").value
+                if "DCW" in inverter_model.points
+                else None
+            )  # DC Power (W)
+            status = (
+                inverter_model.points.get("St").value
+                if "St" in inverter_model.points
+                else None
+            )  # Operating State
 
-            print(f"AC Power: {ac_power} W")
-            print(f"DC Power: {dc_power} W")
-            print(f"Operating State: {status}")
+            log.info(f"AC Power: {ac_power} W")
+            log.info(f"DC Power: {dc_power} W")
+            log.info(f"Operating State: {status}")
 
             # If successful, break out of the retry loop
             break
@@ -64,12 +87,12 @@ def read_sunspec_inverter(ip, port=502, retries=3, delay=2):
         except Exception as e:
             if str(e).startswith("Connection error"):
                 attempt += 1
-                print(f"Attempt {attempt} failed: {e}")
+                log.warning(f"Attempt {attempt} failed: {e}")
                 if attempt < retries:
-                    print(f"Retrying in {delay} seconds...")
+                    log.info(f"Retrying in {delay} seconds...")
                     time.sleep(delay)
                 else:
-                    print("All retry attempts failed. Exiting.")
+                    log.error("All retry attempts failed. Exiting.")
         finally:
             # Ensure the connection is closed
             try:
@@ -88,7 +111,10 @@ if __name__ == "__main__":
         "--retries", type=int, default=3, help="Number of retry attempts (default: 3)"
     )
     parser.add_argument(
-        "--delay", type=int, default=2, help="Delay between retries in seconds (default: 2)"
+        "--delay",
+        type=int,
+        default=2,
+        help="Delay between retries in seconds (default: 2)",
     )
 
     args = parser.parse_args()
