@@ -58,29 +58,17 @@ def read_sunspec_inverter(ip, port=502, retries=3, delay=2):
             for point_name, point in inverter_model.points.items():
                 log.debug(f"{point_name}: {point.value} (type: {type(point.value)})")
 
-            # Decode some example fields from the Inverter Model
-            ac_power = (
-                inverter_model.points.get("W").value
-                if "W" in inverter_model.points
-                else None
-            )  # AC Power (W)
-            dc_power = (
-                inverter_model.points.get("DCW").value
-                if "DCW" in inverter_model.points
-                else None
-            )  # DC Power (W)
-            status = (
-                inverter_model.points.get("St").value
-                if "St" in inverter_model.points
-                else None
-            )  # Operating State
-
-            log.info(f"AC Power: {ac_power} W")
-            log.info(f"DC Power: {dc_power} W")
-            log.info(f"Operating State: {status}")
-
-            # If successful, break out of the retry loop
-            break
+            device.get_dict()
+            # keep the client and print data
+            from time import sleep
+            try:
+                while True:
+                    sleep(1)
+                    device.scan()
+                    log.debug(f"got data: {device.get_dict()})")
+            except KeyboardInterrupt:
+                log.info("Server stopped by user.")
+                raise
 
         except ModbusClientTimeout:
             raise
