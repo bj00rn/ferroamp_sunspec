@@ -8,8 +8,6 @@ class SunspecDevice(ABC):
         self.base_addr = base_addr
         self.models = models
 
-
-    
     def get_registers(self):
         """
         Generate and return the data block for the model.
