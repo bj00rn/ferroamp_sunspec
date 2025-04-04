@@ -1,4 +1,4 @@
-FROM python:3.9.21-alpine
+FROM python:3.11-alpine
 
 # Install Python and pip
 RUN apk add --no-cache python3 py3-pip
