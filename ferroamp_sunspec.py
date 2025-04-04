@@ -53,22 +53,18 @@ async def main():
     modbus_server = SunspecServer(device=ferroamp_device, port=args.modbus_port)
 
     # Define the custom on_message callback for the MQTT listener
-    async def on_message(client, userdata, msg):
+    def on_message(client, userdata, msg):
         try:
             # Parse the JSON payload
             data = json.loads(msg.payload.decode())
-
-            # Update the Ferroamp device with the received data
-            if "gridfreq" in data:
-                log.info(f"Received grid frequency: {data['gridfreq']['val']}")
-                ferroamp_device.models[1].Hz = float(data["gridfreq"]["val"])
+            # update inverter data
+            ferroamp_device.models[1].update_from_mqtt(data)
             modbus_server.update_data()
         except Exception as e:
             log.error(f"Failed to process MQTT message: {e}")
 
     # Create the MQTT listener
     mqtt_listener = FerroampExtApiListener(
-        client_id="ferroamp_listener",
         broker=args.mqtt_host,
         port=args.mqtt_port,
         topic=args.mqtt_topic,
@@ -78,7 +74,6 @@ async def main():
 
     # Start the MQTT listener and Modbus server
     mqtt_listener.connect()
-    await mqtt_listener.subscribe(args.mqtt_topic)
 
     # Define a shutdown event
     shutdown_event = asyncio.Event()
@@ -93,12 +88,17 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, handle_shutdown_signal)
 
+    
+
     # Create tasks for the Modbus server, MQTT listener, and shutdown event
     tasks = [
         asyncio.create_task(mqtt_listener.loop_forever()),
         asyncio.create_task(modbus_server.run_forever()),
         asyncio.create_task(shutdown_event.wait()),  # Wait for the shutdown signal
     ]
+
+    # Start the MQTT listener and Modbus server
+    mqtt_listener.connect()
 
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

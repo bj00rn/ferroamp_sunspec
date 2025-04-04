@@ -24,7 +24,7 @@ class SunspecDevice(ABC):
 class FerroampDevice(SunspecDevice):
     """
         Ferroamp Device class that represent a Ferroamp Energyhub 14 three-phase inverter."
-"""
+    """
     def __init__(self, base_addr=40000):
         models = []
         models.append(CommonModel(Mn="Ferroamp", Md="Energyhub 14"))

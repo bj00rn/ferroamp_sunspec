@@ -2,7 +2,8 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar, List
-from enum import IntEnum
+from enum import IntEnum, StrEnum
+from data import FerroampData
 
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadBuilder
@@ -20,14 +21,16 @@ class NumberEnum(IntEnum):
     NotImplementedInt64 = 0x7FFFFFFFFFFFFFFF
     NotImplementedUint64 = 0xFFFFFFFFFFFFFFFF
     NotImplementedFloat64 = 0x7FF8000000000000  # NaN in IEEE 754
-    NotImplementedString = "\x00" * 32  # Placeholder for string fields
     NotImplementedBitfield32 = 0xFFFFFFFF
     NotImplementedBitfield16 = 0xFFFF
     NotImplementedBitfield8 = 0xFF
     NotImplementedBitfield4 = 0xF
     NotImplementedBitfield2 = 0x3
     NotImplementedBitfield1 = 0x1
-@dataclass
+
+class StringEnum(StrEnum):
+    NotImplementedString = "\x00" * 32  # Placeholder for string fields
+
 class DataModel(ABC):
     """
     Abstract base class for SunSpec data models.
@@ -62,6 +65,14 @@ class DataModel(ABC):
             len(self.registers),
         )
 
+    def update_from_mqtt(self, data: FerroampData):
+        """
+        Update the model fields from the given MQTT data.
+        This method should be implemented by subclasses to handle specific data updates.
+        """
+        raise NotImplementedError(
+            "update_from_mqtt() must be implemented by subclasses"
+        )
 
 @dataclass
 class CommonModel(DataModel):
@@ -107,6 +118,9 @@ class CommonModel(DataModel):
         data = builder.to_registers()
 
         return data
+    
+    def update_from_mqtt(self, data: FerroampData):
+        pass
 
 
 class EndModel(DataModel):
@@ -244,3 +258,36 @@ class Model113(DataModel):
 
         log.debug(f"Model 113 Data Block: {data}, model length: {len(data) - 2}")
         return data
+
+    def update_from_mqtt(self, data: FerroampData):
+        """
+        Update the model fields from the given MQTT data.
+        """
+        for key, value in data.items():
+            if key == "gridfreq":
+                # Update grid frequency
+                setattr(self, "Hz", float(value["val"]))
+            if key == "iextq":
+                # AC Current (A)
+                # Is this the correct field?
+                setattr(self, "AphA", float(value["L1"]))
+                setattr(self, "AphB", float(value["L2"]))
+                setattr(self, "AphC", float(value["L3"]))
+                setattr(self, "A", float(value["L1"])+float(value["L2"])+float(value["L3"]))
+            if key == "ul":
+                setattr(self, "PhVphA", float(value["L1"]))
+                setattr(self, "PhVphB", float(value["L2"]))
+                setattr(self, "PhVphC", float(value["L3"]))
+            if key == "pload":
+                # AC Power (W)
+                setattr(self, "W", float(value["L1"])+float(value["L2"])+float(value["L3"]))
+            if key == "sext":
+                # Apparent Power (VA)
+                setattr(self, "VA", float(value["val"]))
+            if key == "winvprodq":
+                setattr(self, "WH", float(value["L1"])+float(value["L2"])+float(value["L3"]))
+            if key == "temp":
+                # Cabinet Temperature (°C)
+                setattr(self, "TmpCab", float(value["val"]))
+
+    

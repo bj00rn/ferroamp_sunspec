@@ -15,22 +15,20 @@ log = logging.getLogger(__name__)
 
 
 class BaseMqttListener:
-    def __init__(self, client_id, broker, port, topic, on_connect=None, on_message=None):
+    def __init__(self, broker, port, topic, on_connect=None, on_message=None):
         """
         Initialize the MQTT listener.
 
         Args:
-            client_id (str): The MQTT client ID.
             broker (str): The MQTT broker address.
             port (int): The MQTT broker port.
             on_connect (function): Custom on_connect callback function.
             on_message (function): Custom on_message callback function.
         """
-        self.client_id = client_id
         self.broker = broker
         self.port = port
         self.topic = topic
-        self.client = mqtt.Client(client_id=client_id)
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
         # Assign custom callbacks or use default implementations
         self._on_connect = on_connect
@@ -42,6 +40,7 @@ class BaseMqttListener:
 
         # Create an asyncio event loop
         self.loop = asyncio.get_event_loop()
+        self.task = None
 
     def connect(self):
         """
@@ -51,20 +50,20 @@ class BaseMqttListener:
         self.client.connect(self.broker, self.port)
         self.client.subscribe(self.topic)
 
-    def on_connect(self, client, userdata, flags, rc):
+    def on_connect(self, client, userdata, flags, reason_code, properties):
         """
         Callback for when the client connects to the broker.
         """
-        if rc == 0:
-            log.info("Successfully connected to MQTT broker.")
+        if reason_code.is_failure:
+            print(f"Failed to connect: {reason_code}. loop_forever() will retry connection")
         else:
-            log.error(f"Failed to connect to MQTT broker. Return code: {rc}")
-
+            client.subscribe(self.topic)
+            # we should always subscribe from on_connect callback to be sure
+            # our subscribed is persisted across reconnections.
+        
         # Call the custom on_connect callback if provided
         if self._on_connect:
-            asyncio.run_coroutine_threadsafe(
-                self._on_connect(client, userdata, flags, rc), self.loop
-            )
+            self._on_connect(client, userdata, flags, reason_code, properties)
 
     def on_message(self, client, userdata, msg):
         """
@@ -80,9 +79,7 @@ class BaseMqttListener:
 
         # Call the custom on_message callback if provided
         if self._on_message:
-            asyncio.run_coroutine_threadsafe(
-                self._on_message(client, userdata, msg), self.loop
-            )
+            self._on_message(client, userdata, msg)
 
     async def subscribe(self, topic):
         """
@@ -103,7 +100,7 @@ class BaseMqttListener:
 
 
 class FerroampExtApiListener(BaseMqttListener):
-    def __init__(self, client_id, broker, port, topic="extapi/data/ehub", on_connect=None, on_message=None):
+    def __init__(self, broker, port, topic="extapi/data/ehub", on_connect=None, on_message=None):
         """
         Initialize the FerroampExtApiListener.
 
@@ -112,7 +109,7 @@ class FerroampExtApiListener(BaseMqttListener):
             broker (str): The MQTT broker address.
             port (int): The MQTT broker port.
         """
-        super().__init__(client_id, broker, port, topic, on_connect, on_message)
+        super().__init__(broker, port, topic, on_connect, on_message)
 
 
 async def main():
@@ -146,7 +143,6 @@ async def main():
 
     # Initialize the FerroampExtApiListener
     mqtt_listener = FerroampExtApiListener(
-        client_id=args.client_id,
         broker=args.broker,
         port=args.port,
     )
