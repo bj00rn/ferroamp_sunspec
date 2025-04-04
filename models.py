@@ -1,35 +1,14 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar, List
+from typing import ClassVar, List, Optional
 from enum import IntEnum, StrEnum
 from data import FerroampData
+from payload import SunSpecPayloadBuilder
 
 from pymodbus.constants import Endian
-from pymodbus.payload import BinaryPayloadBuilder
 
 log = logging.getLogger(__name__)  # Create a logger instance
-
-class NumberEnum(IntEnum):
-    NotImplementedUint16 = 0xFFFF
-    NotImplementedUint32 = 0xFFFFFFFF
-    NotImplementedFloat32 = 0x7FC00000  # NaN in IEEE 754
-    NotImplementedInt16 = 0x7FFF
-    NotImplementedInt32 = 0x7FFFFFFF
-    NotImplementedInt8 = 0x7F
-    NotImplementedUint8 = 0xFF
-    NotImplementedInt64 = 0x7FFFFFFFFFFFFFFF
-    NotImplementedUint64 = 0xFFFFFFFFFFFFFFFF
-    NotImplementedFloat64 = 0x7FF8000000000000  # NaN in IEEE 754
-    NotImplementedBitfield32 = 0xFFFFFFFF
-    NotImplementedBitfield16 = 0xFFFF
-    NotImplementedBitfield8 = 0xFF
-    NotImplementedBitfield4 = 0xF
-    NotImplementedBitfield2 = 0x3
-    NotImplementedBitfield1 = 0x1
-
-class StringEnum(StrEnum):
-    NotImplementedString = "\x00" * 32  # Placeholder for string fields
 
 class DataModel(ABC):
     """
@@ -76,12 +55,18 @@ class DataModel(ABC):
 
 @dataclass
 class CommonModel(DataModel):
+    """
+    Common Model: Represents the common data block for SunSpec models.
+    """
+    # Mandatory fields
     Mn: str = "Mnfr Corp"  # Manufacturer
     Md: str = "Invrtr"  # Model
     Opt: str = ""  # Options
     Vr: str = "1"  # Version
     SN: str = "123456789"  # Serial Number
     DA: int = 9999  # Device Address
+
+    # Class variables
     ID: ClassVar[int] = 1  # Model ID for Common Block
     L: ClassVar[int] = 66  # Length of the Common Block (in registers)
 
@@ -89,7 +74,7 @@ class CommonModel(DataModel):
         """
         Generate and return the Common Data Block (Model 1) for the SunSpec server.
         """
-        builder = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
+        builder = SunSpecPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
 
         # Add SunSpec ID ("SunS" in ASCII)
         builder.add_16bit_uint(0x5375)  # "Su"
@@ -123,9 +108,9 @@ class CommonModel(DataModel):
         pass
 
 
-class EndModel(DataModel):
+class EmptyModel(DataModel):
     """
-    Empty data model for testing purposes.
+    End Model: Represents the end of the SunSpec data map
     """
 
     ID: ClassVar[int] = 0xFFFF  # End Model ID
@@ -146,6 +131,10 @@ class EndModel(DataModel):
 
 @dataclass
 class Model113(DataModel):
+    """
+    Model 113: Three-Phase Inverter float32 values
+    """
+
     # Class variable
     ID: ClassVar[int] = 113  # Model ID for Three-Phase Inverter (mandatory)
     L: ClassVar[int] = 60  # Length of the Model 113 Block (in registers) (mandatory)
@@ -189,69 +178,48 @@ class Model113(DataModel):
         """
         Generate and return the Model 113 Data Block (Three-Phase Inverter).
         """
-        builder = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
-
-        # Helper for adding 32-bit float fields
-        def add_float32(value):
-            if value is None:
-                builder.add_32bit_uint(NumberEnum.NotImplementedFloat32)  # NaN in IEEE 754
-            else:
-                builder.add_32bit_float(value)
-
-        # Helper for adding 32-bit uint fields
-        def add_uint32(value):
-            if value is None:
-                builder.add_32bit_uint(NumberEnum.NotImplementedUint32)
-            else:
-                builder.add_32bit_uint(value)
-
-        # Helper for adding 16-bit uint fields
-        def add_uint16(value):
-            if value is None:
-                builder.add_16bit_uint(NumberEnum.NotImplementedUint16)
-            else:
-                builder.add_16bit_uint(value)
+        builder = SunSpecPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
 
         # Add Model ID and Length
-        add_uint16(self.ID)  # Model ID
-        add_uint16(self.L)  # Length of the Model 113 Block (in registers)
+        builder.add_16bit_uint(self.ID)  # Model ID
+        builder.add_16bit_uint(self.L)  # Length of the Model 113 Block (in registers)
 
         # Add float32 fields
-        add_float32(self.A)
-        add_float32(self.AphA)
-        add_float32(self.AphB)
-        add_float32(self.AphC)
-        add_float32(self.PPVphAB)
-        add_float32(self.PPVphBC)
-        add_float32(self.PPVphCA)
-        add_float32(self.PhVphA)
-        add_float32(self.PhVphB)
-        add_float32(self.PhVphC)
-        add_float32(self.W)
-        add_float32(self.Hz)
-        add_float32(self.VA)
-        add_float32(self.VAr)
-        add_float32(self.PF)
-        add_float32(self.WH)
-        add_float32(self.DCA)
-        add_float32(self.DCV)
-        add_float32(self.DCW)
-        add_float32(self.TmpCab)
-        add_float32(self.TmpSnk)
-        add_float32(self.TmpTrns)
-        add_float32(self.TmpOt)
+        builder.add_float32(self.A)
+        builder.add_float32(self.AphA)
+        builder.add_float32(self.AphB)
+        builder.add_float32(self.AphC)
+        builder.add_float32(self.PPVphAB)
+        builder.add_float32(self.PPVphBC)
+        builder.add_float32(self.PPVphCA)
+        builder.add_float32(self.PhVphA)
+        builder.add_float32(self.PhVphB)
+        builder.add_float32(self.PhVphC)
+        builder.add_float32(self.W)
+        builder.add_float32(self.Hz)
+        builder.add_float32(self.VA)
+        builder.add_float32(self.VAr)
+        builder.add_float32(self.PF)
+        builder.add_float32(self.WH)
+        builder.add_float32(self.DCA)
+        builder.add_float32(self.DCV)
+        builder.add_float32(self.DCW)
+        builder.add_float32(self.TmpCab)
+        builder.add_float32(self.TmpSnk)
+        builder.add_float32(self.TmpTrns)
+        builder.add_float32(self.TmpOt)
 
         # Add enum16 fields
-        add_uint16(self.St)
-        add_uint16(self.StVnd)
+        builder.add_uint16(self.St)
+        builder.add_uint16(self.StVnd)
 
         # Add bitfield32 fields
-        add_uint32(self.Evt1)
-        add_uint32(self.Evt2)
-        add_uint32(self.EvtVnd1)
-        add_uint32(self.EvtVnd2)
-        add_uint32(self.EvtVnd3)
-        add_uint32(self.EvtVnd4)
+        builder.add_uint32(self.Evt1)
+        builder.add_uint32(self.Evt2)
+        builder.add_uint32(self.EvtVnd1)
+        builder.add_uint32(self.EvtVnd2)
+        builder.add_uint32(self.EvtVnd3)
+        builder.add_uint32(self.EvtVnd4)
 
         # Convert the payload to a list of registers
         data = builder.to_registers()
@@ -286,8 +254,141 @@ class Model113(DataModel):
                 setattr(self, "VA", float(value["val"]))
             if key == "winvprodq":
                 setattr(self, "WH", float(value["L1"])+float(value["L2"])+float(value["L3"]))
-            if key == "temp":
-                # Cabinet Temperature (°C)
-                setattr(self, "TmpCab", float(value["val"]))
 
+
+@dataclass
+class Model214:
+    """
+    Model 214: Delta-connect three-phase (abc) meter with float32 values
+    """
+
+    # Class variables
+    ID: ClassVar[int] = 214  # Model identifier (uint16)
+    L: ClassVar[int] = 78  # Model length (uint16, dynamically calculated)
+
+    # Mandatory fields (sorted first)
+    A: float = 0  # Total AC Current (float32)
+    AphA: float = 0 # Phase A Current (float32)
+    AphB: float = 0 # Phase B Current (float32)
+    AphC: float = 0 # Phase C Current (float32)
+    PPV: float = 0 # Line to Line AC Voltage (float32)
+    PhVphAB: float = 0 # Phase Voltage AB (float32)
+    PhVphBC: float = 0 # Phase Voltage BC (float32)
+    PhVphCA: float = 0# Phase Voltage CA (float32)
+    Hz: float = 0 # Frequency (float32)
+    W: float = 0 # Total Real Power (float32)
+    TotWhExp: float = 0 # Total Real Energy Exported (float32)
+    TotWhImp: float = 0 # Total Real Energy Imported (float32)
+    Evt: int = 0 # Meter Event Flags (bitfield32)
+
+    # Optional fields (sorted after mandatory fields)
+    PhV: Optional[float] = None  # Line to Neutral AC Voltage (float32)
+    PhVphA: Optional[float] = None  # Phase Voltage AN (float32)
+    PhVphB: Optional[float] = None  # Phase Voltage BN (float32)
+    PhVphC: Optional[float] = None  # Phase Voltage CN (float32)
+    WphA: Optional[float] = None  # Watts phase A (float32)
+    WphB: Optional[float] = None  # Watts phase B (float32)
+    WphC: Optional[float] = None  # Watts phase C (float32)
+    VA: Optional[float] = None  # AC Apparent Power (float32)
+    VAphA: Optional[float] = None  # VA phase A (float32)
+    VAphB: Optional[float] = None  # VA phase B (float32)
+    VAphC: Optional[float] = None  # VA phase C (float32)
+    VAR: Optional[float] = None  # Reactive Power (float32)
+    VARphA: Optional[float] = None  # VAR phase A (float32)
+    VARphB: Optional[float] = None  # VAR phase B (float32)
+    VARphC: Optional[float] = None  # VAR phase C (float32)
+    PF: Optional[float] = None  # Power Factor (float32)
+    PFphA: Optional[float] = None  # PF phase A (float32)
+    PFphB: Optional[float] = None  # PF phase B (float32)
+    PFphC: Optional[float] = None  # PF phase C (float32)
+    TotVAhExp: Optional[float] = None  # Total Apparent Energy Exported (float32)
+    TotVAhImp: Optional[float] = None  # Total Apparent Energy Imported (float32)
+    TotVArhImpQ1: Optional[float] = None  # Total Reactive Energy Imported Q1 (float32)
+    TotVArhImpQ2: Optional[float] = None  # Total Reactive Energy Imported Q2 (float32)
+    TotVArhExpQ3: Optional[float] = None  # Total Reactive Energy Exported Q3 (float32)
+    TotVArhExpQ4: Optional[float] = None  # Total Reactive Energy Exported Q4 (float32)
+
+    def get_register(self) -> list:
+        """
+        Generate and return the Model 214 Data Block (Delta-connect three-phase meter with float32 values).
+        """
+        builder = SunSpecPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
+
+        # Add Model ID and Length (not included in the length calculation)
+        builder.add_16bit_uint(self.ID)  # Model ID
+        builder.add_16bit_uint(self.L)  # Model Length (in registers)
+
+        # Add mandatory fields
+        builder.add_float32(self.A)
+        builder.add_float32(self.AphA)
+        builder.add_float32(self.AphB)
+        builder.add_float32(self.AphC)
+        builder.add_float32(self.PPV)
+        builder.add_float32(self.PhVphAB)
+        builder.add_float32(self.PhVphBC)
+        builder.add_float32(self.PhVphCA)
+        builder.add_float32(self.Hz)
+        builder.add_float32(self.W)
+        builder.add_float32(self.TotWhExp)
+        builder.add_float32(self.TotWhImp)
+        builder.add_32bit_uint(self.Evt)
+
+        # Add optional fields
+        builder.add_float32(self.PhV)
+        builder.add_float32(self.PhVphA)
+        builder.add_float32(self.PhVphB)
+        builder.add_float32(self.PhVphC)
+        builder.add_float32(self.WphA)
+        builder.add_float32(self.WphB)
+        builder.add_float32(self.WphC)
+        builder.add_float32(self.VA)
+        builder.add_float32(self.VAphA)
+        builder.add_float32(self.VAphB)
+        builder.add_float32(self.VAphC)
+        builder.add_float32(self.VAR)
+        builder.add_float32(self.VARphA)
+        builder.add_float32(self.VARphB)
+        builder.add_float32(self.VARphC)
+        builder.add_float32(self.PF)
+        builder.add_float32(self.PFphA)
+        builder.add_float32(self.PFphB)
+        builder.add_float32(self.PFphC)
+        builder.add_float32(self.TotVAhExp)
+        builder.add_float32(self.TotVAhImp)
+        builder.add_float32(self.TotVArhImpQ1)
+        builder.add_float32(self.TotVArhImpQ2)
+        builder.add_float32(self.TotVArhExpQ3)
+        builder.add_float32(self.TotVArhExpQ4)
+
+        # Convert the payload to a list of registers
+        data = builder.to_registers()
+        return data
     
+    def update_from_mqtt(self, data: FerroampData):
+        """
+        Update the model fields from the given MQTT data.
+        """
+        for key, value in data.items():
+            if key == "gridfreq":
+                # Update grid frequency
+                setattr(self, "Hz", float(value["val"]))
+            if key == "iextq":
+                # AC Current (A)
+                # Is this the correct field?
+                setattr(self, "AphA", float(value["L1"]))
+                setattr(self, "AphB", float(value["L2"]))
+                setattr(self, "AphC", float(value["L3"]))
+                setattr(self, "A", float(value["L1"])+float(value["L2"])+float(value["L3"]))
+            if key == "ul":
+                setattr(self, "PhVphA", float(value["L1"]))
+                setattr(self, "PhVphB", float(value["L2"]))
+                setattr(self, "PhVphC", float(value["L3"]))
+            if key == "pload":
+                # AC Power (W)
+                setattr(self, "W", float(value["L1"])+float(value["L2"])+float(value["L3"]))
+            if key == "sext":
+                # Apparent Power (VA)
+                setattr(self, "VA", float(value["val"]))
+            if key == "winvprodq":
+                setattr(self, "WH", float(value["L1"])+float(value["L2"])+float(value["L3"]))
+

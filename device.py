@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from models import CommonModel, Model113, EndModel
+from models import CommonModel, Model113, Model214, EmptyModel
 
 
 class SunspecDevice(ABC):
@@ -29,5 +29,6 @@ class FerroampDevice(SunspecDevice):
         models = []
         models.append(CommonModel(Mn="Ferroamp", Md="Energyhub 14"))
         models.append(Model113())
-        models.append(EndModel())
+        models.append(Model214())
+        models.append(EmptyModel())
         super().__init__(base_addr, models)

@@ -59,6 +59,7 @@ async def main():
             data = json.loads(msg.payload.decode())
             # update inverter data
             ferroamp_device.models[1].update_from_mqtt(data)
+            ferroamp_device.models[2].update_from_mqtt(data)
             modbus_server.update_data()
         except Exception as e:
             log.error(f"Failed to process MQTT message: {e}")
