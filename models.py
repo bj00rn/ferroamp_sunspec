@@ -264,22 +264,22 @@ class Model214:
 
     # Class variables
     ID: ClassVar[int] = 214  # Model identifier (uint16)
-    L: ClassVar[int] = 78  # Model length (uint16, dynamically calculated)
+    L: ClassVar[int] = 124  # Model length (uint16, including Model ID and Length fields)
 
     # Mandatory fields (sorted first)
     A: float = 0  # Total AC Current (float32)
-    AphA: float = 0 # Phase A Current (float32)
-    AphB: float = 0 # Phase B Current (float32)
-    AphC: float = 0 # Phase C Current (float32)
-    PPV: float = 0 # Line to Line AC Voltage (float32)
-    PhVphAB: float = 0 # Phase Voltage AB (float32)
-    PhVphBC: float = 0 # Phase Voltage BC (float32)
-    PhVphCA: float = 0# Phase Voltage CA (float32)
-    Hz: float = 0 # Frequency (float32)
-    W: float = 0 # Total Real Power (float32)
-    TotWhExp: float = 0 # Total Real Energy Exported (float32)
-    TotWhImp: float = 0 # Total Real Energy Imported (float32)
-    Evt: int = 0 # Meter Event Flags (bitfield32)
+    AphA: float = 0  # Phase A Current (float32)
+    AphB: float = 0  # Phase B Current (float32)
+    AphC: float = 0  # Phase C Current (float32)
+    PPV: float = 0  # Line to Line AC Voltage (float32)
+    PhVphAB: float = 0  # Phase Voltage AB (float32)
+    PhVphBC: float = 0  # Phase Voltage BC (float32)
+    PhVphCA: float = 0  # Phase Voltage CA (float32)
+    Hz: float = 0  # Frequency (float32)
+    W: float = 0  # Total Real Power (float32)
+    TotWhExp: float = 0  # Total Real Energy Exported (float32)
+    TotWhImp: float = 0  # Total Real Energy Imported (float32)
+    Evt: int = 0  # Meter Event Flags (bitfield32)
 
     # Optional fields (sorted after mandatory fields)
     PhV: Optional[float] = None  # Line to Neutral AC Voltage (float32)
@@ -308,6 +308,32 @@ class Model214:
     TotVArhExpQ3: Optional[float] = None  # Total Reactive Energy Exported Q3 (float32)
     TotVArhExpQ4: Optional[float] = None  # Total Reactive Energy Exported Q4 (float32)
 
+    # Additional fields from model_214.json
+    TotWhExpPhA: Optional[float] = None  # Total Watt-hours Exported phase A (float32)
+    TotWhExpPhB: Optional[float] = None  # Total Watt-hours Exported phase B (float32)
+    TotWhExpPhC: Optional[float] = None  # Total Watt-hours Exported phase C (float32)
+    TotWhImpPhA: Optional[float] = None  # Total Watt-hours Imported phase A (float32)
+    TotWhImpPhB: Optional[float] = None  # Total Watt-hours Imported phase B (float32)
+    TotWhImpPhC: Optional[float] = None  # Total Watt-hours Imported phase C (float32)
+    TotVAhExpPhA: Optional[float] = None  # Total VA-hours Exported phase A (float32)
+    TotVAhExpPhB: Optional[float] = None  # Total VA-hours Exported phase B (float32)
+    TotVAhExpPhC: Optional[float] = None  # Total VA-hours Exported phase C (float32)
+    TotVAhImpPhA: Optional[float] = None  # Total VA-hours Imported phase A (float32)
+    TotVAhImpPhB: Optional[float] = None  # Total VA-hours Imported phase B (float32)
+    TotVAhImpPhC: Optional[float] = None  # Total VA-hours Imported phase C (float32)
+    TotVArhImpQ1phA: Optional[float] = None  # Total VAr-hours Imported Q1 phase A (float32)
+    TotVArhImpQ1phB: Optional[float] = None  # Total VAr-hours Imported Q1 phase B (float32)
+    TotVArhImpQ1phC: Optional[float] = None  # Total VAr-hours Imported Q1 phase C (float32)
+    TotVArhImpQ2phA: Optional[float] = None  # Total VAr-hours Imported Q2 phase A (float32)
+    TotVArhImpQ2phB: Optional[float] = None  # Total VAr-hours Imported Q2 phase B (float32)
+    TotVArhImpQ2phC: Optional[float] = None  # Total VAr-hours Imported Q2 phase C (float32)
+    TotVArhExpQ3phA: Optional[float] = None  # Total VAr-hours Exported Q3 phase A (float32)
+    TotVArhExpQ3phB: Optional[float] = None  # Total VAr-hours Exported Q3 phase B (float32)
+    TotVArhExpQ3phC: Optional[float] = None  # Total VAr-hours Exported Q3 phase C (float32)
+    TotVArhExpQ4phA: Optional[float] = None  # Total VAr-hours Exported Q4 phase A (float32)
+    TotVArhExpQ4phB: Optional[float] = None  # Total VAr-hours Exported Q4 phase B (float32)
+    TotVArhExpQ4phC: Optional[float] = None  # Total VAr-hours Exported Q4 phase C (float32)
+
     def get_register(self) -> list:
         """
         Generate and return the Model 214 Data Block (Delta-connect three-phase meter with float32 values).
@@ -318,7 +344,9 @@ class Model214:
         builder.add_16bit_uint(self.ID)  # Model ID
         builder.add_16bit_uint(self.L)  # Model Length (in registers)
 
-        # Add mandatory fields
+        # length should be 2
+
+        # Add mandatory fields 26 registers
         builder.add_float32(self.A)
         builder.add_float32(self.AphA)
         builder.add_float32(self.AphB)
@@ -331,9 +359,10 @@ class Model214:
         builder.add_float32(self.W)
         builder.add_float32(self.TotWhExp)
         builder.add_float32(self.TotWhImp)
-        builder.add_32bit_uint(self.Evt)
+        builder.add_bitfield32(self.Evt)
 
-        # Add optional fields
+    
+        # Add 25 optional fields = 50 registers
         builder.add_float32(self.PhV)
         builder.add_float32(self.PhVphA)
         builder.add_float32(self.PhVphB)
@@ -360,35 +389,65 @@ class Model214:
         builder.add_float32(self.TotVArhExpQ3)
         builder.add_float32(self.TotVArhExpQ4)
 
+        # Add missing fields
+        builder.add_float32(self.TotWhExpPhA)
+        builder.add_float32(self.TotWhExpPhB)
+        builder.add_float32(self.TotWhExpPhC)
+        builder.add_float32(self.TotWhImpPhA)
+        builder.add_float32(self.TotWhImpPhB)
+        builder.add_float32(self.TotWhImpPhC)
+        builder.add_float32(self.TotVAhExpPhA)
+        builder.add_float32(self.TotVAhExpPhB)
+        builder.add_float32(self.TotVAhExpPhC)
+        builder.add_float32(self.TotVAhImpPhA)
+        builder.add_float32(self.TotVAhImpPhB)
+        builder.add_float32(self.TotVAhImpPhC)
+        builder.add_float32(self.TotVArhImpQ1phA)
+        builder.add_float32(self.TotVArhImpQ1phB)
+        builder.add_float32(self.TotVArhImpQ1phC)
+        builder.add_float32(self.TotVArhImpQ2phA)
+        builder.add_float32(self.TotVArhImpQ2phB)
+        builder.add_float32(self.TotVArhImpQ2phC)
+        builder.add_float32(self.TotVArhExpQ3phA)
+        builder.add_float32(self.TotVArhExpQ3phB)
+        builder.add_float32(self.TotVArhExpQ3phC)
+        builder.add_float32(self.TotVArhExpQ4phA)
+        builder.add_float32(self.TotVArhExpQ4phB)
+        builder.add_float32(self.TotVArhExpQ4phC)
+        
         # Convert the payload to a list of registers
         data = builder.to_registers()
+        if len(data) != self.L + 2:  # Include Model ID and Length in the total
+            log.warning(
+                f"Model 214 Data Block length mismatch: expected {self.L + 2} registers, got {len(data)}"
+            )
         return data
     
     def update_from_mqtt(self, data: FerroampData):
         """
         Update the model fields from the given MQTT data.
         """
-        for key, value in data.items():
-            if key == "gridfreq":
-                # Update grid frequency
-                setattr(self, "Hz", float(value["val"]))
-            if key == "iextq":
-                # AC Current (A)
-                # Is this the correct field?
-                setattr(self, "AphA", float(value["L1"]))
-                setattr(self, "AphB", float(value["L2"]))
-                setattr(self, "AphC", float(value["L3"]))
-                setattr(self, "A", float(value["L1"])+float(value["L2"])+float(value["L3"]))
-            if key == "ul":
-                setattr(self, "PhVphA", float(value["L1"]))
-                setattr(self, "PhVphB", float(value["L2"]))
-                setattr(self, "PhVphC", float(value["L3"]))
-            if key == "pload":
-                # AC Power (W)
-                setattr(self, "W", float(value["L1"])+float(value["L2"])+float(value["L3"]))
-            if key == "sext":
-                # Apparent Power (VA)
-                setattr(self, "VA", float(value["val"]))
-            if key == "winvprodq":
-                setattr(self, "WH", float(value["L1"])+float(value["L2"])+float(value["L3"]))
+        # for key, value in data.items():
+        #     if key == "gridfreq":
+        #         # Update grid frequency
+        #         setattr(self, "Hz", float(value["val"]))
+        #     if key == "iextq":
+        #         # AC Current (A)
+        #         # Is this the correct field?
+        #         setattr(self, "AphA", float(value["L1"]))
+        #         setattr(self, "AphB", float(value["L2"]))
+        #         setattr(self, "AphC", float(value["L3"]))
+        #         setattr(self, "A", float(value["L1"])+float(value["L2"])+float(value["L3"]))
+        #     if key == "ul":
+        #         setattr(self, "PhVphA", float(value["L1"]))
+        #         setattr(self, "PhVphB", float(value["L2"]))
+        #         setattr(self, "PhVphC", float(value["L3"]))
+        #     if key == "pload":
+        #         # AC Power (W)
+        #         setattr(self, "W", float(value["L1"])+float(value["L2"])+float(value["L3"]))
+        #     if key == "sext":
+        #         # Apparent Power (VA)
+        #         setattr(self, "VA", float(value["val"]))
+        #     if key == "winvprodq":
+        #         setattr(self, "WH", float(value["L1"])+float(value["L2"])+float(value["L3"]))
 

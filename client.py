@@ -81,6 +81,8 @@ def read_sunspec_inverter(ip, port=502, retries=3, delay=2):
                     time.sleep(delay)
                 else:
                     log.error("All retry attempts failed. Exiting.")
+            else:
+                log.error(f"An error occurred: {e}")         
         finally:
             # Ensure the connection is closed
             try:
