@@ -3,3 +3,4 @@ pymodbus
 pysunspec2
 pyserial
 paho-mqtt
+pytest
