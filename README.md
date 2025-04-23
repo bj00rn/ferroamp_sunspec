@@ -1,13 +1,20 @@
-## Ferroamp ExtApi -> Sunspec ModbusTCP Server
+# Ferroamp ExtApi -> Sunspec ModbusTCP Server
 
 This is currently a non functional experiment at the time of writing. Most (if not all) model points are not mapped correctly.
 
-The general idea is to read data from Ferroamp local ExtApi and expose this data as Sunspec compliant(ish) modbus register.
+The general idea is to read data from Ferroamp local ExtApi and expose this data as a modbus server with a Sunspec compliant(ish) modbus model map data block to enable integration with devices that support Sunspec protocol.
 
+An example is the newer Nibe model S heat pumps that can integrate Sunspec compliant inverters in MyUplink.
+
+
+## Sunspec model map
 * Three phase inverter model
 * Three phase smart meter model
+* TODO: Multiple MPPTT
 
-## Inverter Model (113)
+## Data mapping from ExtApi
+
+### Inverter Model (113)
 
 | **Description** | **Label** | **Mandatory** | **Name** | **Size** | **Type**  | **Units** | **Symbols** | **ExtApi** | Comment |
 |-----------------|-----------|---------------|----------|----------|-----------|-----------|-------------|------------|--|
@@ -34,7 +41,7 @@ production
 | DC Current                          | DC Amps                       |               | DCA        | 2        | float32       | A         |                                                                                                 | ?          |
 | DC Voltage                          | DC Voltage                    |               | DCV        | 2        | float32       | V         |                                                                                                 | ?          |
 | DC Power                            | DC Watts                      |               | DCW        | 2        | float32       | W         |                                                                                                 | ?          |
-| **Cabinet Temperature**             | Cabinet Temperature           | M             | TmpCab     | 2        | float32       | C         |                                                                                                 | temp?          |
+| **Cabinet Temperature**             | Cabinet Temperature           | M             | TmpCab     | 2        | float32       | C         |                                                                                                 | ?          |
 | Heat Sink Temperature               | Heat Sink Temperature         |               | TmpSnk     | 2        | float32       | C         |                                                                                                 | ?          |
 | Transformer Temperature             | Transformer Temperature       |               | TmpTrns    | 2        | float32       | C         |                                                                                                 | ?          |
 | Other Temperature                   | Other Temperature             |               | TmpOt      | 2        | float32       | C         |                                                                                                 | ?          |
