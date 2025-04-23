@@ -1,6 +1,6 @@
 ## Ferroamp ExtApi -> Sunspec ModbusTCP Server
 
-This is currently a non functional experiment, use at own peril!
+This is currently a non functional experiment at the time of writing. Most (if not all) model points are not mapped correctly.
 
 The general idea is to read data from Ferroamp local ExtApi and expose this data as Sunspec compliant(ish) modbus register.
 
