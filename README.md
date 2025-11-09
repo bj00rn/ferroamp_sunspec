@@ -4,8 +4,7 @@ This is currently a non functional experiment at the time of writing. Most (if n
 
 The general idea is to read data from Ferroamp local ExtApi and expose this data as a modbus server with a Sunspec compliant(ish) modbus model map data block to enable integration with devices that support Sunspec protocol.
 
-An example is the newer Nibe model S heat pumps that can integrate Sunspec compliant inverters in MyUplink.
-
+An example is the newer Nibe model S heat pumps that can integrate with Sunspec compliant solar inverters.
 
 ## Sunspec model map
 * Three phase inverter model

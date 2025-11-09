@@ -1,5 +1,5 @@
 argparse
-pymodbus
+pymodbus>=3.8.0,<3.9.0
 pysunspec2
 pyserial
 paho-mqtt

@@ -1,10 +1,13 @@
-import asyncio
 import logging
+from typing import TYPE_CHECKING
+
 from pymodbus.datastore import ModbusServerContext, ModbusSlaveContext
 from pymodbus.datastore.store import ModbusSequentialDataBlock
 from pymodbus.device import ModbusDeviceIdentification
 from pymodbus.server import StartAsyncTcpServer
-from device import FerroampDevice
+
+if TYPE_CHECKING:
+    from device import FerroampDevice
 
 # Configure logging
 logging.basicConfig(
@@ -20,7 +23,7 @@ class SunspecServer:
     A class to represent a SunSpec server that combines Common Data Block and Model 111 Data Block.
     """
 
-    def __init__(self, device, port=502, base_addr=40001):
+    def __init__(self, device: "FerroampDevice", port=502, base_addr=40001):
         """
         Initialize the SunspecServer with a device.
 

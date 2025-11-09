@@ -1,16 +1,14 @@
 import argparse
+import json
 import logging
 import time
 
-from sunspec2.modbus.client import (
-    SunSpecModbusClientDeviceTCP,
-    SunSpecModbusClientModel,
-)
+from sunspec2.modbus.client import SunSpecModbusClientDeviceTCP
 from sunspec2.modbus.modbus import ModbusClientTimeout
 
 # Configure the logger
 logging.basicConfig(
-    level=logging.DEBUG,  # Set the logging level to DEBUG
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",  # Log format
     datefmt="%Y-%m-%d %H:%M:%S",  # Date format
 )
@@ -33,31 +31,7 @@ def read_sunspec_inverter(ip, port=502, retries=3, delay=2):
             if not device.models:
                 log.error("No SunSpec models found on the device.")
                 return
-
-            # Access the Common Block (Model 1)
-            common_model: "SunSpecModbusClientModel" = device.models.get(1)[0]
-            if not common_model:
-                print("SunSpec Common Block (Model 1) not found.")
-                return
-
-            manufacturer = common_model.get_dict().get("Mn", None)  # Manufacturer
-            if not manufacturer:
-                log.error("Device is not SunSpec-compliant.")
-                return
-            log.debug(f"SunSpec Manufacturer: {manufacturer}")
-
-            # Access the Inverter Model Block (Model 101)
-            inverter_model = device.models.get(113)[0]
-            if not inverter_model:
-                log.error("SunSpec Inverter Block (Model 113) not found.")
-                return
-            if inverter_model.model.error_info:
-                log.warning(f"Error in model 113: {inverter_model.model.error_info}")
-
-            log.debug("Raw Inverter Model Data:")
-            for point_name, point in inverter_model.points.items():
-                log.debug(f"{point_name}: {point.value} (type: {type(point.value)})")
-
+            log.info(f"Connected to SunSpec device at {ip}:{port}")
             device.get_dict()
             # keep the client and print data
             from time import sleep
@@ -65,7 +39,7 @@ def read_sunspec_inverter(ip, port=502, retries=3, delay=2):
                 while True:
                     sleep(1)
                     device.scan()
-                    log.debug(f"got data: {device.get_dict()})")
+                    print(json.dumps(device.get_dict(), indent=2))
             except KeyboardInterrupt:
                 log.info("Server stopped by user.")
                 raise
@@ -84,11 +58,7 @@ def read_sunspec_inverter(ip, port=502, retries=3, delay=2):
             else:
                 log.error(f"An error occurred: {e}")         
         finally:
-            # Ensure the connection is closed
-            try:
-                device.close()
-            except:
-                pass
+            device.close()
 
 
 if __name__ == "__main__":
@@ -106,6 +76,14 @@ if __name__ == "__main__":
         default=2,
         help="Delay between retries in seconds (default: 2)",
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    )
 
     args = parser.parse_args()
+    logging.getLogger().setLevel(args.log_level.upper())
     read_sunspec_inverter(args.ip, args.port, args.retries, args.delay)
