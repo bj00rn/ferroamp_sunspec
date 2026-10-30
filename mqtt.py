@@ -1,16 +1,9 @@
 import asyncio
-import json
 import logging
 import argparse
 from paho.mqtt import client as mqtt
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 log = logging.getLogger(__name__)
 
 
@@ -38,26 +31,25 @@ class BaseMqttListener:
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
 
-        # Create an asyncio event loop
-        self.loop = asyncio.get_event_loop()
-        self.task = None
-
     def connect(self):
         """
         Connect to the MQTT broker.
         """
         log.info(f"Connecting to MQTT broker at {self.broker}:{self.port}...")
-        self.client.connect(self.broker, self.port)
-        self.client.subscribe(self.topic)
+        result = self.client.connect(self.broker, self.port)
+        if result != mqtt.MQTT_ERR_SUCCESS:
+            raise ConnectionError(f"MQTT connect failed: {mqtt.error_string(result)}")
 
     def on_connect(self, client, userdata, flags, reason_code, properties):
         """
         Callback for when the client connects to the broker.
         """
         if reason_code.is_failure:
-            print(f"Failed to connect: {reason_code}. loop_forever() will retry connection")
+            log.error("MQTT connection rejected: %s; the network loop will retry", reason_code)
         else:
-            client.subscribe(self.topic)
+            result, _ = client.subscribe(self.topic)
+            if result != mqtt.MQTT_ERR_SUCCESS:
+                raise ConnectionError(f"MQTT subscribe failed: {mqtt.error_string(result)}")
             # we should always subscribe from on_connect callback to be sure
             # our subscribed is persisted across reconnections.
         
@@ -69,15 +61,6 @@ class BaseMqttListener:
         """
         Callback for when a message is received.
         """
-        log.debug(f"Message received on topic {msg.topic}: {msg.payload.decode()}")
-        try:
-            # Parse the JSON payload
-            data = json.loads(msg.payload.decode())
-            log.debug(f"Processed message data: {data}")
-        except json.JSONDecodeError as e:
-            log.error(f"Failed to decode JSON payload: {e}")
-
-        # Call the custom on_message callback if provided
         if self._on_message:
             self._on_message(client, userdata, msg)
 
@@ -89,14 +72,21 @@ class BaseMqttListener:
             topic (str): The MQTT topic to subscribe to.
         """
         log.info(f"Subscribing to topic: {topic}")
-        await asyncio.get_event_loop().run_in_executor(None, self.client.subscribe, topic)
+        result, _ = await asyncio.to_thread(self.client.subscribe, topic)
+        if result != mqtt.MQTT_ERR_SUCCESS:
+            raise ConnectionError(f"MQTT subscribe failed: {mqtt.error_string(result)}")
 
     async def loop_forever(self):
         """
         Start the loop to process network traffic asynchronously.
         """
         log.info("Starting MQTT loop...")
-        await asyncio.get_event_loop().run_in_executor(None, self.client.loop_forever)
+        try:
+            result = await asyncio.to_thread(self.client.loop_forever)
+            if result != mqtt.MQTT_ERR_SUCCESS:
+                raise ConnectionError(f"MQTT loop failed: {mqtt.error_string(result)}")
+        finally:
+            self.client.disconnect()
 
 
 class FerroampExtApiListener(BaseMqttListener):
@@ -145,11 +135,11 @@ async def main():
     mqtt_listener = FerroampExtApiListener(
         broker=args.broker,
         port=args.port,
+        topic=args.topic,
     )
 
     # Connect to the MQTT broker and subscribe to the topic
-    mqtt_listener.connect()
-    await mqtt_listener.subscribe(args.topic)
+    await asyncio.to_thread(mqtt_listener.connect)
 
     # Start the MQTT loop
     await mqtt_listener.loop_forever()

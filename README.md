@@ -1,92 +1,142 @@
-# Ferroamp ExtApi -> Sunspec ModbusTCP Server
+# Ferroamp ExtApi -> SunSpec Modbus TCP
 
-This is currently a non functional experiment at the time of writing. Most (if not all) model points are not mapped correctly.
+Expose Ferroamp telemetry as a SunSpec Modbus TCP device. The SunSpec core can
+also run independently, without MQTT or Ferroamp hardware.
 
-The general idea is to read data from Ferroamp local ExtApi and expose this data as a modbus server with a Sunspec compliant(ish) modbus model map data block to enable integration with devices that support Sunspec protocol.
+## Architecture
 
-An example is the newer Nibe model S heat pumps that can integrate with Sunspec compliant solar inverters.
+- [device.py](device.py): transport-independent SunSpec device and Ferroamp
+  profile. Uses **pysunspec2** model definitions, model/point objects, register
+  offsets, type encoding, and not-implemented values. There are no handwritten
+  model layouts or payload builders.
+- [server.py](server.py): read-only Modbus TCP transport using **pymodbus**.
+  pysunspec2 provides the SunSpec data model and client, but not a TCP server.
+- [telemetry.py](telemetry.py): Ferroamp ExtApi payload-to-point mapping.
+- [mqtt.py](mqtt.py): MQTT connection, subscription, and raw message delivery.
+- [ferroamp_sunspec.py](ferroamp_sunspec.py): application wiring and lifecycle.
 
-## Sunspec model map
-* Three phase inverter model
-* Three phase smart meter model
-* TODO: Multiple MPPTT
+The default chain contains Common model **1**, three-phase float inverter
+**113**, delta-connected float meter **214**, and the end marker. Model lengths
+and field order come from pysunspec2's bundled definitions.
 
-## Data mapping from ExtApi
+Unpopulated measurements, operating states, and event flags are exposed as
+SunSpec **not implemented**, not fabricated zero readings. Updates are validated
+and encoded before a complete register snapshot is published. Omitted points
+retain their last value; explicitly assigning `None` marks a point unavailable.
+Each register read sees one complete snapshot; separate Modbus requests may
+observe different updates.
 
-### Inverter Model (113)
+## Installation
 
-| **Description** | **Label** | **Mandatory** | **Name** | **Size** | **Type**  | **Units** | **Symbols** | **ExtApi** | Comment |
-|-----------------|-----------|---------------|----------|----------|-----------|-----------|-------------|------------|--|
-| **Model identifier**                | Model ID                      | M             | ID         | 1        | uint16        |           |                                                                                                 | ?          |
-| **Model length**                    | Model Length                  | M             | L          | 1        | uint16        |           |                                                                                                 | ?          |
-| **AC Current**                      | Amps                          | M             | A          | 2        | float32       | A         |                                                                                                 | iextq?          | Sum of all phases
-| **Phase A Current**                 | Amps PhaseA                   | M             | AphA       | 2        | float32       | A         |                                                                                                 | iextq?          | 
-| **Phase B Current**                 | Amps PhaseB                   | M             | AphB       | 2        | float32       | A         |                                                                                                 | iextq?          |
-| **Phase C Current**                 | Amps PhaseC                   | M             | AphC       | 2        | float32       | A         |                                                                                                 | iextq?          |
-| Phase Voltage AB                    | Phase Voltage AB              |               | PPVphAB    | 2        | float32       | V         |                                                                                                 | ?          |
-| Phase Voltage BC                    | Phase Voltage BC              |               | PPVphBC    | 2        | float32       | V         |                                                                                                 | ?          |
-| Phase Voltage CA                    | Phase Voltage CA              |               | PPVphCA    | 2        | float32       | V         |                                                                                                 |           |
-| **Phase Voltage AN**                | Phase Voltage AN              | M             | PhVphA     | 2        | float32       | V         |                                                                                                 | ul’?          |
-| **Phase Voltage BN**                | Phase Voltage BN              | M             | PhVphB     | 2        | float32       | V         |                                                                                                 | ul’?          |
-| **Phase Voltage CN**                | Phase Voltage CN              | M             | PhVphC     | 2        | float32       | V         |                                                                                                 | ?          |
-| **AC Power**                        | Watts                         | M             | W          | 2        | float32       | W         |                                                                                                 | ?          |
-| **Line Frequency**                  | Hz                            | M             | Hz         | 2        | float32       | Hz        |                                                                                                 | gridfreq?          |
-| AC Apparent Power                   | VA                            |               | VA         | 2        | float32       | VA        |                                                                                                 | ?          |
-| AC Reactive Power                   | VAr                           |               | VAr        | 2        | float32       | var       |                                                                                                 | ?          |
-| AC Power Factor                     | PF                            |               | PF         | 2        | float32       | Pct       |                                                                                                 | ?          |
-| **AC Energy**                       | WattHours                     | M             | WH         | 2        | float32       | Wh        |                                                                                                 | ?          | AC Lifetime
-Energy
-production
-| DC Current                          | DC Amps                       |               | DCA        | 2        | float32       | A         |                                                                                                 | ?          |
-| DC Voltage                          | DC Voltage                    |               | DCV        | 2        | float32       | V         |                                                                                                 | ?          |
-| DC Power                            | DC Watts                      |               | DCW        | 2        | float32       | W         |                                                                                                 | ?          |
-| **Cabinet Temperature**             | Cabinet Temperature           | M             | TmpCab     | 2        | float32       | C         |                                                                                                 | ?          |
-| Heat Sink Temperature               | Heat Sink Temperature         |               | TmpSnk     | 2        | float32       | C         |                                                                                                 | ?          |
-| Transformer Temperature             | Transformer Temperature       |               | TmpTrns    | 2        | float32       | C         |                                                                                                 | ?          |
-| Other Temperature                   | Other Temperature             |               | TmpOt      | 2        | float32       | C         |                                                                                                 | ?          |
-| **Operating state**                 | Operating State               | M             | St         | 1        | enum16        |           | OFF: 1, SLEEPING: 2, STARTING: 3, MPPT: 4, THROTTLED: 5, SHUTTING_DOWN: 6, FAULT: 7, STANDBY: 8 | ?          | Hardcode to "MPPT" for now
-| Vendor specific operating state code| Vendor Operating State        |               | StVnd      | 1        | enum16        |           |                                                                                                 | ?          |
-| **Event fields**                    | Event1                        | M             | Evt1       | 2        | bitfield32    |           | GROUND_FAULT: 0, DC_OVER_VOLT: 1, AC_DISCONNECT: 2, DC_DISCONNECT: 3, ...                      | ?          | Hardcode to nothing for now
-| **Reserved for future use**         | Event Bitfield 2              | M             | Evt2       | 2        | bitfield32    |           |                                                                                                 | ?          | set to not implemented
-| Vendor defined events               | Vendor Event Bitfield 1       |               | EvtVnd1    | 2        | bitfield32    |           |                                                                                                 | ?          |
-| Vendor defined events               | Vendor Event Bitfield 2       |               | EvtVnd2    | 2        | bitfield32    |           |                                                                                                 | ?          |
-| Vendor defined events               | Vendor Event Bitfield 3       |               | EvtVnd3    | 2        | bitfield32    |           |                                                                                                 | ?          |
-| Vendor defined events               | Vendor Event Bitfield 4       |               | EvtVnd4    | 2        | bitfield32    |           |                                                                                                 | ?          |
+Requires Python 3.11 or newer.
 
-## Smart Meter (Model 204)
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
 
-| **Description**                     | **Label**                     | **Mandatory** | **Name**   | **Size** | **Type**      | **Units** | **Symbols**                                                                                     | **ExtApi** |
-|-------------------------------------|-------------------------------|---------------|------------|----------|---------------|-----------|-------------------------------------------------------------------------------------------------|------------|
-| **Model identifier**                | Model ID                      | M             | ID         | 1        | uint16        |           |                                                                                                 | ?          |
-| **Model length**                    | Model Length                  | M             | L          | 1        | uint16        |           |                                                                                                 | ?          |
-| **AC Current**                      | Amps                          | M             | A          | 2        | float32       | A         |                                                                                                 | ?          |
-| **Phase A Current**                 | Amps PhaseA                   | M             | AphA       | 2        | float32       | A         |                                                                                                 | ?          |
-| **Phase B Current**                 | Amps PhaseB                   | M             | AphB       | 2        | float32       | A         |                                                                                                 | ?          |
-| **Phase C Current**                 | Amps PhaseC                   | M             | AphC       | 2        | float32       | A         |                                                                                                 | ?          |
-| Phase Voltage AB                    | Phase Voltage AB              |               | PPVphAB    | 2        | float32       | V         |                                                                                                 | ?          |
-| Phase Voltage BC                    | Phase Voltage BC              |               | PPVphBC    | 2        | float32       | V         |                                                                                                 | ?          |
-| Phase Voltage CA                    | Phase Voltage CA              |               | PPVphCA    | 2        | float32       | V         |                                                                                                 | ?          |
-| **Phase Voltage AN**                | Phase Voltage AN              | M             | PhVphA     | 2        | float32       | V         |                                                                                                 | ?          |
-| **Phase Voltage BN**                | Phase Voltage BN              | M             | PhVphB     | 2        | float32       | V         |                                                                                                 | ?          |
-| **Phase Voltage CN**                | Phase Voltage CN              | M             | PhVphC     | 2        | float32       | V         |                                                                                                 | ?          |
-| **AC Power**                        | Watts                         | M             | W          | 2        | float32       | W         |                                                                                                 | ?          |
-| **Line Frequency**                  | Hz                            | M             | Hz         | 2        | float32       | Hz        |                                                                                                 | ?          |
-| AC Apparent Power                   | VA                            |               | VA         | 2        | float32       | VA        |                                                                                                 | ?          |
-| AC Reactive Power                   | VAr                           |               | VAr        | 2        | float32       | var       |                                                                                                 | ?          |
-| AC Power Factor                     | PF                            |               | PF         | 2        | float32       | Pct       |                                                                                                 | ?          |
-| **AC Energy**                       | WattHours                     | M             | WH         | 2        | float32       | Wh        |                                                                                                 | ?          |
-| DC Current                          | DC Amps                       |               | DCA        | 2        | float32       | A         |                                                                                                 | ?          |
-| DC Voltage                          | DC Voltage                    |               | DCV        | 2        | float32       | V         |                                                                                                 | ?          |
-| DC Power                            | DC Watts                      |               | DCW        | 2        | float32       | W         |                                                                                                 | ?          |
-| **Cabinet Temperature**             | Cabinet Temperature           | M             | TmpCab     | 2        | float32       | C         |                                                                                                 | ?          |
-| Heat Sink Temperature               | Heat Sink Temperature         |               | TmpSnk     | 2        | float32       | C         |                                                                                                 | ?          |
-| Transformer Temperature             | Transformer Temperature       |               | TmpTrns    | 2        | float32       | C         |                                                                                                 | ?          |
-| Other Temperature                   | Other Temperature             |               | TmpOt      | 2        | float32       | C         |                                                                                                 | ?          |
-| **Operating state**                 | Operating State               | M             | St         | 1        | enum16        |           | OFF: 1, SLEEPING: 2, STARTING: 3, MPPT: 4, THROTTLED: 5, SHUTTING_DOWN: 6, FAULT: 7, STANDBY: 8 | ?          |
-| Vendor specific operating state code| Vendor Operating State        |               | StVnd      | 1        | enum16        |           |                                                                                                 | ?          |
-| **Event fields**                    | Event1                        | M             | Evt1       | 2        | bitfield32    |           | GROUND_FAULT: 0, DC_OVER_VOLT: 1, AC_DISCONNECT: 2, DC_DISCONNECT: 3, ...                      | ?          |
-| **Reserved for future use**         | Event Bitfield 2              | M             | Evt2       | 2        | bitfield32    |           |                                                                                                 | ?          |
-| Vendor defined events               | Vendor Event Bitfield 1       |               | EvtVnd1    | 2        | bitfield32    |           |                                                                                                 | ?          |
-| Vendor defined events               | Vendor Event Bitfield 2       |               | EvtVnd2    | 2        | bitfield32    |           |                                                                                                 | ?          |
-| Vendor defined events               | Vendor Event Bitfield 3       |               | EvtVnd3    | 2        | bitfield32    |           |                                                                                                 | ?          |
-| Vendor defined events               | Vendor Event Bitfield 4       |               | EvtVnd4    | 2        | bitfield32    |           |                                                                                                 | ?          |
+The pysunspec2 version is pinned because its unavailable float encoding is
+important for interoperability. pymodbus is constrained to its supported 3.8 API.
+
+## Standalone server (no MQTT)
+
+```sh
+python server.py --host 127.0.0.1 --port 1502
+```
+
+This serves device identity and unavailable telemetry until values are provided
+programmatically:
+
+```python
+import asyncio
+
+from device import FerroampDevice
+from server import SunspecServer
+
+
+async def main():
+    device = FerroampDevice()
+    device.update_points({
+        113: {"W": 3200.0, "Hz": 50.0, "PhVphA": 230.0},
+        214: {"W": -400.0, "TotWhImp": 12000.0},
+    })
+    await SunspecServer(device, host="127.0.0.1", port=1502).run_forever()
+
+
+asyncio.run(main())
+```
+
+Other sources can call `update_points()` without knowing anything about MQTT.
+Values use the raw units in the SunSpec definition; for scaled integer models,
+provide raw integer values and their scale-factor points. `SunspecDevice` accepts
+an ordered `model_ids` sequence for other fixed model chains, with Common model
+1 first. Updates address top-level points by model ID and name.
+
+The `models` lookup exposes native pysunspec2 models (for example
+`device.models[113][0]`), but direct point mutation does **not** publish a register
+snapshot; use `update_points()`.
+
+## MQTT bridge
+
+```sh
+python ferroamp_sunspec.py \
+  --mqtt-host 192.0.2.10 \
+  --mqtt-port 1883 \
+  --mqtt-topic extapi/data/ehub \
+  --modbus-port 1502
+```
+
+Both entry points accept `--base-addr` (default **40000**) and `--unit-id`
+(default **1**, range 1..247). The bridge accepts `--modbus-host`; the standalone
+server accepts `--host`. The default bind address is `0.0.0.0`, and the default
+TCP port is 502, which may require elevated privileges.
+
+The base address is the actual **zero-based Modbus wire address**, not a
+one-based holding-register reference. The `SunS` signature starts at 40000;
+Common model 1 starts at 40002. Only the configured unit ID is served. Holding
+register reads (function 3) are supported; writes and other data tables are
+rejected. No authentication is provided by this Modbus TCP endpoint; bind it
+only to a trusted network.
+
+## Existing ExtApi mappings and limitations
+
+The bridge deliberately preserves the experiment's existing mappings while
+moving them outside the SunSpec models:
+
+| ExtApi input | Model 113 points |
+|---|---|
+| `gridfreq.val` | `Hz` |
+| `iextq.L1/L2/L3` | `AphA/B/C`, sum to `A` |
+| `ul.L1/L2/L3` | `PhVphA/B/C` |
+| `pload.L1/L2/L3` | sum to `W` |
+| `sext.val` | `VA` |
+| `winvprodq.L1/L2/L3` | sum to `WH` |
+
+**These are not verified physical mappings.** In particular, reactive grid
+current and load power may not describe inverter current and production.
+Energy units and sign conventions need confirmation against the Ferroamp API.
+Do not use the bridge's telemetry for control decisions until verified.
+
+Model 214 is correctly encoded and can be populated through `update_points()`,
+but has no automatic ExtApi mapping yet. Whether model 213 (wye) is more
+appropriate depends on the installation. MPPT/battery models and inverter
+controls are not implemented. Missing telemetry is retained indefinitely;
+there is currently no stale-data timeout.
+
+Partial messages are supported. Recognized fields must contain valid finite
+numbers and complete phase triples; invalid messages are logged and rejected
+without changing any points. Unrecognized fields are ignored.
+
+## Verification
+
+```sh
+python -m pytest -q
+python client.py 127.0.0.1 --port 1502
+```
+
+Tests cover library-defined layouts and unavailable values, atomic updates,
+telemetry validation, read-only register access, wire addressing, startup and
+shutdown, and real pysunspec2 client discovery/readback over loopback TCP at
+base addresses 0, 40000, and 50000. No MQTT broker or Ferroamp hardware is
+required for the tests.
