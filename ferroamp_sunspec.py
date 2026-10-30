@@ -6,6 +6,8 @@ import json
 import logging
 import signal
 
+import aiomqtt
+
 from device import FerroampDevice
 from mqtt import FerroampExtApiListener
 from server import SunspecServer
@@ -30,8 +32,10 @@ async def main():
         device, port=args.modbus_port, host=args.modbus_host, unit_id=args.unit_id,
     )
 
-    def on_message(client, userdata, msg):
+    async def on_message(msg: aiomqtt.Message) -> None:
         try:
+            if not isinstance(msg.payload, (str, bytes, bytearray)):
+                raise ValueError("ExtApi payload must contain JSON text")
             data = json.loads(msg.payload)
             if not isinstance(data, dict):
                 raise ValueError("ExtApi payload must be a JSON object")
@@ -43,7 +47,6 @@ async def main():
         broker=args.mqtt_host,
         port=args.mqtt_port,
         topic=args.mqtt_topic,
-        on_message=on_message,
     )
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -54,16 +57,14 @@ async def main():
     tasks = []
     try:
         await server.start()
-        await asyncio.to_thread(listener.connect)
         tasks = [
-            asyncio.create_task(listener.loop_forever()),
+            asyncio.create_task(listener.run(on_message)),
             asyncio.create_task(shutdown.wait()),
         ]
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             task.result()
     finally:
-        listener.client.disconnect()
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

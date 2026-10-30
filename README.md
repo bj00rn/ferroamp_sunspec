@@ -12,7 +12,8 @@ also run independently, without MQTT or Ferroamp hardware.
 - [server.py](server.py): read-only Modbus TCP transport using **pymodbus**.
   pysunspec2 provides the SunSpec data model and client, but not a TCP server.
 - [telemetry.py](telemetry.py): Ferroamp ExtApi payload-to-point mapping.
-- [mqtt.py](mqtt.py): MQTT connection, subscription, and raw message delivery.
+- [mqtt.py](mqtt.py): asyncio-native MQTT connection, subscription, and raw
+  message delivery using **aiomqtt**.
 - [ferroamp_sunspec.py](ferroamp_sunspec.py): application wiring and lifecycle.
 
 The default chain contains Common model **1**, three-phase float inverter
@@ -91,6 +92,13 @@ Both entry points accept `--base-addr` (default **40000**) and `--unit-id`
 (default **1**, range 1..247). The bridge accepts `--modbus-host`; the standalone
 server accepts `--host`. The default bind address is `0.0.0.0`, and the default
 TCP port is 502, which may require elevated privileges.
+
+The bridge consumes MQTT messages directly on the asyncio event loop, with no
+application-managed MQTT worker thread or Paho callbacks. Connection and
+subscription failures are logged and retried every five seconds; each
+reconnection subscribes again. Shutdown cancels message consumption (including
+connection attempts or retry waits) and closes the MQTT client context before
+stopping the Modbus server. aiomqtt itself uses Paho internally.
 
 The base address is the actual **zero-based Modbus wire address**, not a
 one-based holding-register reference. The `SunS` signature starts at 40000;
