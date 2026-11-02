@@ -19,7 +19,7 @@ def test_model_chain_uses_library_layouts():
     words = device.get_registers()
     assert words[:2] == [0x5375, 0x6E53]
     offset = 2
-    for model_id in (1, 113, 214):
+    for model_id in (1, 113, 213):
         reference = sunspec.Model(model_id=model_id)
         assert words[offset:offset + 2] == [model_id, reference.L.value]
         assert device.models[model_id][0].model_addr == device.base_addr + offset
@@ -29,28 +29,30 @@ def test_model_chain_uses_library_layouts():
     assert len(words) == 260
     assert decode_model(device, 1).Mn.value == "Ferroamp"
     assert decode_model(device, 1).DA.value == 1
+    assert 701 not in device.models
 
 
 def test_unavailable_values_use_library_sentinels():
     device = FerroampDevice()
-    model = device.models[113][0]
-    offset = model.model_addr - device.base_addr
+    inverter = device.models[113][0]
+    offset = inverter.model_addr - device.base_addr
     words = device.get_registers()
-    assert words[offset + model.W.offset:offset + model.W.offset + 2] == [0x7FC0, 0]
-    assert words[offset + model.St.offset] == 0xFFFF
-    assert words[offset + model.Evt1.offset:offset + model.Evt1.offset + 2] == [0xFFFF, 0xFFFF]
+    assert words[offset + inverter.W.offset:offset + inverter.W.offset + 2] == [0x7FC0, 0]
+    assert words[offset + inverter.St.offset] == 0xFFFF
+    assert words[offset + inverter.Evt1.offset:offset + inverter.Evt1.offset + 2] == [0xFFFF, 0xFFFF]
     assert decode_model(device, 113).W.value is None
-    assert decode_model(device, 214).TotWhImp.value is None
+    assert decode_model(device, 113).Evt1.value is None
+    assert decode_model(device, 213).TotWhImp.value is None
 
 
-def test_point_updates_use_correct_meter_offsets():
+def test_float_point_updates_use_library_model_offsets():
     device = FerroampDevice()
     device.update_points({
         113: {"W": 4321.5, "St": 4, "Evt1": 0, "Hz": 50},
-        214: {"W": -100, "TotWhImp": 12345, "PPVphAB": 400, "Evt": 2},
+        213: {"W": -100, "TotWhImp": 12345, "PPVphAB": 400, "Evt": 2},
     })
     inverter = decode_model(device, 113)
-    meter = decode_model(device, 214)
+    meter = decode_model(device, 213)
     assert inverter.W.value == 4321.5
     assert inverter.St.value == 4
     assert inverter.Evt1.value == 0
@@ -90,9 +92,9 @@ def test_invalid_update_is_atomic(updates):
     device = FerroampDevice()
     before = device.get_registers()
     with pytest.raises(ValueError):
-        device.update_points({214: {"W": 999}, **updates})
+        device.update_points({213: {"W": 999}, **updates})
     assert device.get_registers() == before
-    assert device.models[214][0].W.value is None
+    assert device.models[213][0].W.value is None
 
 
 @pytest.mark.parametrize("kwargs", [

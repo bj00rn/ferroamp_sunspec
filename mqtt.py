@@ -7,7 +7,8 @@ import logging
 
 import aiomqtt
 
-log = logging.getLogger(__name__)
+from configuration import parse_configuration
+log = logging.getLogger("ferroamp.mqtt")
 
 
 class FerroampExtApiListener:
@@ -32,6 +33,7 @@ class FerroampExtApiListener:
                     port=self.port,
                     identifier=self.client_id,
                 ) as client:
+                    log.info("Connected broker %s:%s", self.broker, self.port)
                     await client.subscribe(self.topic)
                     log.info("Subscribed to MQTT topic %s at %s:%s",
                              self.topic, self.broker, self.port)
@@ -48,7 +50,14 @@ async def main():
     parser.add_argument("--port", type=int, default=1883)
     parser.add_argument("--client_id", default="ferroamp_listener")
     parser.add_argument("--topic", default="extapi/data/ehub")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--log-level", type=str.upper, default="INFO",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+        help="logging threshold (default: INFO)",
+    )
+    args = parse_configuration(parser)
+    logging.basicConfig(level=args.log_level)
+    logging.getLogger().setLevel(args.log_level)
 
     async def on_message(message: aiomqtt.Message) -> None:
         log.info("Message on %s: %r", message.topic, message.payload)
@@ -60,7 +69,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

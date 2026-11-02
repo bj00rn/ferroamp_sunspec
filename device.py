@@ -5,11 +5,13 @@ from copy import copy
 import math
 import struct
 from threading import RLock
+import logging
 
 from sunspec2 import device, mb
 
 PointValue = str | int | float | None
 
+log = logging.getLogger(__name__)
 
 class SunspecDevice:
     """A fixed model chain with atomically published register snapshots.
@@ -21,7 +23,7 @@ class SunspecDevice:
     def __init__(
         self,
         base_addr: int = mb.SUNS_BASE_ADDR_DEFAULT,
-        model_ids: Sequence[int] = (1, 113, 214),
+        model_ids: Sequence[int] = (1, 113, 213),
     ):
         if not model_ids or model_ids[0] != 1:
             raise ValueError("The Common model (1) must be first")
@@ -55,11 +57,17 @@ class SunspecDevice:
         with self._lock:
             return list(self._registers)
 
-    def update_points(self, updates: Mapping[int, Mapping[str, PointValue]]) -> None:
-        """Publish raw SunSpec point values; None means not implemented.
+    def update_points(
+        self,
+        updates: Mapping[int, Mapping[str, PointValue]],
+        *,
+        computed: bool = False,
+    ) -> None:
+        """Publish point values; None means not implemented.
 
         Omitted points retain their previous value. All values are checked and
         encoded by the library before any model or register value is changed.
+        Set ``computed=True`` to provide engineering values for scaled points.
         """
         with self._lock:
             registers = list(self._registers)
@@ -87,7 +95,7 @@ class SunspecDevice:
                             raise ValueError(f"Invalid numeric value for {model_id}.{name}: {value!r}")
 
                     candidate = copy(point)
-                    candidate.value = value
+                    candidate.set_value(value, computed=computed)
                     try:
                         encoded = candidate.get_mb()
                     except device.ModelError as exc:
@@ -100,7 +108,8 @@ class SunspecDevice:
                     changes.append((point, value))
 
             for point, value in changes:
-                point.value = value
+                log.debug("Updated datapoint %s, %s", point, value)
+                point.set_value(value, computed=computed)
             self._registers = tuple(registers)
 
 
@@ -110,7 +119,7 @@ class FerroampDevice(SunspecDevice):
     def __init__(self, base_addr: int = mb.SUNS_BASE_ADDR_DEFAULT, unit_id: int = 1):
         if not 1 <= unit_id <= 247:
             raise ValueError("unit_id must be in 1..247")
-        super().__init__(base_addr=base_addr)
+        super().__init__(base_addr=base_addr, model_ids=(1, 113, 213))
         self.update_points({
             1: {
                 "Mn": "Ferroamp",

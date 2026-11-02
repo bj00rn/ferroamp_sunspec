@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -9,6 +10,94 @@ import ferroamp_sunspec as application
 from device import FerroampDevice
 import mqtt
 from mqtt import FerroampExtApiListener
+from ferroamp_sunspec import PointFreshness
+from server import SunspecServer
+
+
+@pytest.mark.parametrize("level", ["debug", "WARNING"])
+def test_mqtt_log_level_argument(monkeypatch, level):
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "level", root.level)
+    monkeypatch.setattr("sys.argv", [
+        "mqtt.py", "--broker", "test", "--log-level", level,
+    ])
+    run = AsyncMock()
+    monkeypatch.setattr(FerroampExtApiListener, "run", run)
+    asyncio.run(mqtt.main())
+    assert root.getEffectiveLevel() == getattr(logging, level.upper())
+    run.assert_awaited_once()
+
+
+def test_listener_info_logging_is_independent_of_aiomqtt(caplog):
+    with caplog.at_level(logging.INFO):
+        assert logging.getLogger("mqtt").getEffectiveLevel() == logging.WARNING
+        mqtt.log.info("Listener connected")
+    assert "Listener connected" in caplog.text
+
+
+def test_point_freshness_expires_per_point_and_recovers_on_update(caplog):
+    class Clock:
+        now = 0.0
+
+        def __call__(self):
+            return self.now
+
+    clock = Clock()
+    device = FerroampDevice()
+    freshness = PointFreshness(device, timeout=5, clock=clock)
+    freshness.publish({113: {"W": 500}, 213: {"W": 11000}})
+
+    clock.now = 4
+    freshness.publish({113: {"W": 600}})
+    clock.now = 5
+    assert freshness.expire() == [(213, "W")]
+    assert device.models[113][0].W.value == 600
+    assert device.models[213][0].W.value is None
+    assert freshness.expire() == []
+
+    freshness.publish({213: {"W": 10800}})
+    assert device.models[213][0].W.value == 10800
+    assert (213, "W") not in freshness.expired
+    assert "213.W" in caplog.text
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
+def test_point_freshness_requires_positive_finite_timeout(timeout):
+    with pytest.raises(ValueError, match="positive finite"):
+        PointFreshness(FerroampDevice(), timeout)
+
+
+def test_modbus_warns_only_for_reads_overlapping_expired_points(caplog):
+    device = FerroampDevice()
+    now = [0.0]
+    freshness = PointFreshness(device, timeout=5, clock=lambda: now[0])
+    server = SunspecServer(device, unit_id=7, stale_points=freshness.expired)
+    model = device.models[213][0]
+    address = model.model_addr + model.W.offset
+    with caplog.at_level(logging.WARNING):
+        server.store.getValues(3, address, 2)
+        assert not caplog.records
+        freshness.publish({213: {"W": 11000}})
+        server.store.getValues(3, address, 2)
+        assert not caplog.records
+
+        now[0] = 5
+        freshness.expire()
+        caplog.clear()
+        server.store.getValues(3, device.base_addr, 2)
+        assert not caplog.records
+        server.store.getValues(3, address + 1, 1)
+        assert len(caplog.records) == 1
+        assert (
+            f"unit=7 function=3 address={address + 1} count=1 points=213.W"
+            in caplog.text
+        )
+        assert device.models[213][0].W.value is None
+
+        caplog.clear()
+        freshness.publish({213: {"W": 10800}})
+        server.store.getValues(3, address, 2)
+        assert not caplog.records
 
 
 def test_real_aiomqtt_client_receives_over_loopback_and_disconnects():
@@ -218,8 +307,10 @@ def test_message_handler_errors_propagate_and_close_client(monkeypatch):
 
 
 @pytest.mark.parametrize("payload,expected_power", [
-    (b'{"pload":{"L1":"100","L2":"200","L3":"300"}}', 600),
-    (b'{"gridfreq":{"val":"50"},"pload":{"L1":"100"}}', None),
+    (b'{"pinv":{"L1":"100","L2":"200","L3":"300"},'
+     b'"pext":{"L1":"-10","L2":"-20","L3":"-30"},'
+     b'"winvprodq":{"L1":"3600000","L2":"7200000","L3":"10800000"}}', -600),
+    (b'{"gridfreq":{"val":"50"},"pinv":{"L1":"100"}}', None),
     (b'not json', None),
     (b'\xff', None),
     (b'[]', None),
@@ -263,6 +354,64 @@ def test_application_wiring_and_cleanup(monkeypatch, caplog, payload, expected_p
     assert listener.closed
     assert server.stopped
     assert device.models[113][0].W.value == expected_power
+    if expected_power == -600:
+        assert device.models[113][0].WH.value == 6
     if expected_power is None:
         assert device.models[113][0].Hz.value is None
         assert "Rejected MQTT message" in caplog.text
+
+
+@pytest.mark.parametrize("send_valid", [True, False])
+def test_application_starts_with_unavailable_telemetry_and_cleans_up(monkeypatch, send_valid):
+    async def scenario():
+        started = asyncio.Event()
+        processed = asyncio.Event()
+        stopped = asyncio.Event()
+        device = FerroampDevice()
+
+        class Listener:
+            def __init__(self, **kwargs):
+                pass
+
+            async def run(self, on_message):
+                assert started.is_set()
+                assert device.models[113][0].W.value is None
+                assert device.models[213][0].Hz.value is None
+                for payload in (b"{}", b'{"unknown":1}', b"invalid"):
+                    await on_message(SimpleNamespace(payload=payload, topic="test"))
+                    await asyncio.sleep(0)
+                    assert device.models[213][0].Hz.value is None
+                if send_valid:
+                    await on_message(SimpleNamespace(
+                        payload=b'{"gridfreq":{"val":"50"}}', topic="test",
+                    ))
+                    assert device.models[213][0].Hz.value == 50
+                processed.set()
+                await asyncio.Event().wait()
+
+        class Server:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def start(self):
+                started.set()
+
+            async def stop(self):
+                stopped.set()
+
+        monkeypatch.setenv("MQTT_HOST", "test")
+        monkeypatch.setattr("sys.argv", ["ferroamp_sunspec.py"])
+        monkeypatch.setattr(application, "FerroampExtApiListener", Listener)
+        monkeypatch.setattr(application, "SunspecServer", Server)
+        monkeypatch.setattr(application, "FerroampDevice", lambda **kwargs: device)
+        task = asyncio.create_task(application.main())
+        try:
+            await asyncio.wait_for(processed.wait(), timeout=2)
+            assert started.is_set()
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert stopped.is_set()
+
+    asyncio.run(scenario())
