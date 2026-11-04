@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from sunspec2 import device as sunspec
 
-from device import FerroampDevice, SunspecDevice
+from ferroamp_sunspec.device import FerroampDevice, SunspecDevice
 
 
 def decode_model(device, model_id):

@@ -1,7 +1,7 @@
 import pytest
 
-from device import FerroampDevice
-from telemetry import ehub_points
+from ferroamp_sunspec.device import FerroampDevice
+from ferroamp_sunspec.telemetry import ehub_points
 
 
 def phase(a, b, c):

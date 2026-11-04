@@ -1,17 +1,20 @@
 import asyncio
 import logging
+import ssl
+import shutil
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import aiomqtt
 import pytest
 
-import ferroamp_sunspec as application
-from device import FerroampDevice
-import mqtt
-from mqtt import FerroampExtApiListener
-from ferroamp_sunspec import PointFreshness
-from server import SunspecServer
+from ferroamp_sunspec import bridge as application
+from ferroamp_sunspec.device import FerroampDevice
+from ferroamp_sunspec import mqtt
+from ferroamp_sunspec.mqtt import FerroampExtApiListener
+from ferroamp_sunspec.bridge import PointFreshness
+from ferroamp_sunspec.server import SunspecServer
 
 
 @pytest.mark.parametrize("level", ["debug", "WARNING"])
@@ -100,7 +103,25 @@ def test_modbus_warns_only_for_reads_overlapping_expired_points(caplog):
         assert not caplog.records
 
 
-def test_real_aiomqtt_client_receives_over_loopback_and_disconnects():
+@pytest.mark.parametrize("tls", [False, True])
+def test_real_aiomqtt_client_receives_over_loopback_and_disconnects(tls, tmp_path, monkeypatch):
+    server_tls = None
+    if tls:
+        openssl = shutil.which("openssl")
+        if openssl is None:
+            pytest.skip("openssl is required to generate a loopback TLS certificate")
+        cert = tmp_path / "cert.pem"
+        key = tmp_path / "key.pem"
+        subprocess.run(
+            [openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", str(key), "-out", str(cert), "-days", "1",
+             "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost"],
+            check=True, capture_output=True,
+        )
+        server_tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_tls.load_cert_chain(cert, key)
+        monkeypatch.setenv("SSL_CERT_FILE", str(cert))
+
     async def scenario():
         received = asyncio.Event()
         disconnected = asyncio.Event()
@@ -145,10 +166,12 @@ def test_real_aiomqtt_client_receives_over_loopback_and_disconnects():
             assert message.payload == b"{}"
             received.set()
 
-        async with await asyncio.start_server(broker, "127.0.0.1", 0) as server:
+        async with await asyncio.start_server(broker, "127.0.0.1", 0, ssl=server_tls) as server:
             port = server.sockets[0].getsockname()[1]
             task = asyncio.create_task(
-                FerroampExtApiListener("127.0.0.1", port, "test").run(on_message),
+                FerroampExtApiListener(
+                    "mqtts://localhost" if tls else "mqtt://127.0.0.1", port, "test",
+                ).run(on_message),
             )
             try:
                 await asyncio.wait_for(received.wait(), timeout=3)
@@ -160,6 +183,50 @@ def test_real_aiomqtt_client_receives_over_loopback_and_disconnects():
             assert disconnected.is_set()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("broker,override,host,port,tls", [
+    ("broker.invalid", None, "broker.invalid", 1883, False),
+    ("mqtt://broker.invalid", None, "broker.invalid", 1883, False),
+    ("mqtts://broker.invalid", None, "broker.invalid", 8883, True),
+    ("mqtts://broker.invalid:9883", None, "broker.invalid", 9883, True),
+    ("mqtts://broker.invalid:9883", 8884, "broker.invalid", 8884, True),
+    ("mqtt://broker.invalid:8883", None, "broker.invalid", 8883, False),
+    ("mqtt://[::1]:1884", None, "::1", 1884, False),
+])
+def test_broker_uri(broker, override, host, port, tls):
+    listener = FerroampExtApiListener(broker, override)
+    assert listener.broker == host
+    assert listener.port == port
+    assert (listener.tls_context is not None) == tls
+    if tls:
+        assert listener.tls_context.verify_mode == ssl.CERT_REQUIRED
+        assert listener.tls_context.check_hostname is True
+
+
+@pytest.mark.parametrize("broker", ["broker.invalid", "mqtt://broker.invalid", "mqtt://broker.invalid:8883"])
+@pytest.mark.parametrize("credentials", [
+    {"username": "test-user"},
+    {"password": "test-password"},
+    {"username": "test-user", "password": "test-password"},
+    {"username": ""},
+    {"password": ""},
+])
+def test_authentication_requires_tls(broker, credentials):
+    with pytest.raises(ValueError, match="MQTT authentication requires TLS"):
+        FerroampExtApiListener(broker, **credentials)
+
+
+@pytest.mark.parametrize("broker", [
+    "", "http://broker", "mqtts://", "mqtt://broker:abc", "mqtt://broker:65536",
+    "mqtt://broker:0", "mqtt://user:secret@broker", "mqtt://broker/topic",
+    "mqtt://broker?query", "mqtt://broker#fragment", "mqtt://[broken",
+    "mqtt://bad host",
+])
+def test_invalid_broker_uri_does_not_disclose_credentials(broker):
+    with pytest.raises(ValueError, match="Invalid MQTT broker address") as exc:
+        FerroampExtApiListener(broker)
+    assert "secret" not in str(exc.value)
 
 
 class FakeClient:
@@ -191,19 +258,26 @@ class FakeClient:
         await asyncio.Event().wait()
 
 
-def test_mqtt_raw_delivery_and_cancellation_closes_client(monkeypatch):
+@pytest.mark.parametrize("username,password", [(None, None), ("test-user", "test-password")])
+def test_mqtt_raw_delivery_and_cancellation_closes_client(monkeypatch, username, password):
     async def scenario():
         message = SimpleNamespace(payload=b"\xff", topic="test")
         client = FakeClient([message])
         factory = Mock(return_value=client)
         monkeypatch.setattr(mqtt.aiomqtt, "Client", factory)
         callback = AsyncMock()
-        listener = FerroampExtApiListener("broker.invalid", 1884, "custom", "reader")
+        listener = FerroampExtApiListener(
+            "mqtts://broker.invalid" if username is not None else "broker.invalid",
+            1884, "custom", "reader",
+            username=username, password=password,
+        )
         task = asyncio.create_task(listener.run(callback))
         try:
             await asyncio.wait_for(client.waiting.wait(), timeout=1)
             factory.assert_called_once_with(
                 hostname="broker.invalid", port=1884, identifier="reader",
+                tls_context=listener.tls_context,
+                username=username, password=password,
             )
             client.subscribe.assert_awaited_once_with("custom")
             callback.assert_awaited_once_with(message)
@@ -214,6 +288,39 @@ def test_mqtt_raw_delivery_and_cancellation_closes_client(monkeypatch):
         assert client.closed
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("entrypoint,prefix,host_option", [
+    (application, "MQTT_", "--mqtt-host"),
+    (mqtt, "", "--broker"),
+])
+@pytest.mark.parametrize("source", ["cli", "environment", "file"])
+def test_authentication_configuration(monkeypatch, tmp_path, entrypoint, prefix, host_option, source):
+    argv = ["command", host_option, "mqtts://broker.invalid"]
+    for name, value in (("USERNAME", "test-user"), ("PASSWORD", "test-password")):
+        key = f"{prefix}{name}"
+        monkeypatch.delenv(key, raising=False)
+        monkeypatch.delenv(f"{key}_FILE", raising=False)
+        if source == "cli":
+            argv.extend([f"--{key.lower().replace('_', '-')}", value])
+        elif source == "environment":
+            monkeypatch.setenv(key, value)
+        else:
+            path = tmp_path / key
+            path.write_text(value + "\n", encoding="utf-8")
+            monkeypatch.setenv(f"{key}_FILE", str(path))
+    monkeypatch.setattr("sys.argv", argv)
+    listener = Mock()
+    listener.run = AsyncMock(side_effect=RuntimeError("test stop"))
+    factory = Mock(return_value=listener)
+    monkeypatch.setattr(entrypoint, "FerroampExtApiListener", factory)
+    if entrypoint is application:
+        server = Mock(start=AsyncMock(), stop=AsyncMock())
+        monkeypatch.setattr(application, "SunspecServer", Mock(return_value=server))
+    with pytest.raises(RuntimeError, match="test stop"):
+        asyncio.run(entrypoint.main())
+    assert factory.call_args.kwargs["username"] == "test-user"
+    assert factory.call_args.kwargs["password"] == "test-password"
 
 
 @pytest.mark.parametrize("failure", ["connect", "subscribe", "receive"])

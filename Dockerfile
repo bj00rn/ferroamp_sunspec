@@ -5,9 +5,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
 
-COPY configuration.py device.py server.py telemetry.py mqtt.py ferroamp_sunspec.py ./
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project --no-editable
 
-ENTRYPOINT ["python", "ferroamp_sunspec.py"]
+COPY README.md ./
+COPY ferroamp_sunspec/ ./ferroamp_sunspec/
+RUN uv sync --locked --no-dev --no-editable
+
+ENTRYPOINT ["ferroamp-sunspec"]

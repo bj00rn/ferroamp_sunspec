@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 import math
 
-from device import PointValue
+from .device import PointValue
 
 PHASES = ("L1", "L2", "L3")
 MILLIJOULES_PER_WH = 3_600_000

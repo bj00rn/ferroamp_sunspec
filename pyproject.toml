@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ferroamp-sunspec"
+version = "0.1.0"
+description = "Bridge Ferroamp EnergyHub MQTT telemetry to SunSpec Modbus TCP"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pymodbus>=3.8.0,<3.9.0",
+    "pysunspec2==1.3.7",
+    "pyserial",
+    "aiomqtt>=2.4,<3",
+]
+
+[project.scripts]
+ferroamp-sunspec = "ferroamp_sunspec.bridge:cli"
+ferroamp-sunspec-server = "ferroamp_sunspec.server:cli"
+ferroamp-mqtt-listener = "ferroamp_sunspec.mqtt:cli"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ferroamp_sunspec"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/ferroamp_sunspec",
+    "/pyproject.toml",
+    "/uv.lock",
+    "/README.md",
+    "/requirements.txt",
+    "/Dockerfile",
+    "/AGENTS.md",
+    "/pytest.ini",
+    "/test_*.py",
+    "/ferroamp_sunspec.py",
+    "/server.py",
+    "/mqtt.py",
+    "/client.py",
+]

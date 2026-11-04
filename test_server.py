@@ -10,9 +10,9 @@ import pytest
 from pymodbus.client import ModbusTcpClient
 from sunspec2.modbus.client import SunSpecModbusClientDeviceTCP
 
-from device import FerroampDevice
-from server import SunspecServer
-from telemetry import ehub_points
+from ferroamp_sunspec.device import FerroampDevice
+from ferroamp_sunspec.server import SunspecServer
+from ferroamp_sunspec.telemetry import ehub_points
 
 
 def bound_port(server):
@@ -107,7 +107,7 @@ def test_wire_addressing_ranges_and_read_only_registers():
 def test_modbus_request_tracing_is_opt_in(caplog):
     async def scenario():
         quiet_server = SunspecServer(FerroampDevice(), host="127.0.0.1", port=0)
-        with caplog.at_level(logging.INFO, logger="server"):
+        with caplog.at_level(logging.INFO, logger="ferroamp_sunspec.server"):
             assert quiet_server.store.validate(3, 40000, 2)
             quiet_server.store.getValues(3, 40000, 2)
             assert "Modbus request" not in caplog.text
@@ -147,7 +147,7 @@ def test_modbus_request_tracing_is_opt_in(caplog):
 def test_client_connection_is_logged_without_request_tracing(caplog):
     async def scenario():
         server = SunspecServer(FerroampDevice(), host="127.0.0.1", port=0)
-        with caplog.at_level(logging.INFO, logger="server"):
+        with caplog.at_level(logging.INFO, logger="ferroamp_sunspec.server"):
             await server.start()
             try:
                 reader, writer = await asyncio.open_connection("127.0.0.1", bound_port(server))
@@ -175,14 +175,14 @@ def test_unavailable_point_reads_log_debug_without_stale_warning(caplog):
     server = SunspecServer(device)
     model = device.models[113][0]
     address = model.model_addr + model.DCW.offset
-    with caplog.at_level(logging.DEBUG, logger="server"):
+    with caplog.at_level(logging.DEBUG, logger="ferroamp_sunspec.server"):
         server.store.getValues(3, address + 1, 1)
     assert "unavailable non-stale points" in caplog.text
     assert "points=113.DCW" in caplog.text
     assert all(record.levelno == logging.DEBUG for record in caplog.records)
     caplog.clear()
     device.update_points({113: {"DCW": 500}})
-    with caplog.at_level(logging.DEBUG, logger="server"):
+    with caplog.at_level(logging.DEBUG, logger="ferroamp_sunspec.server"):
         server.store.getValues(3, address, 2)
     assert not caplog.records
 
@@ -287,9 +287,11 @@ def test_server_cancellation_closes_socket():
 def test_core_does_not_import_mqtt():
     result = subprocess.run(
         [sys.executable, "-c",
-         "import sys; import server; from device import FerroampDevice; "
+         "import sys; from ferroamp_sunspec import server; "
+         "from ferroamp_sunspec.device import FerroampDevice; "
          "server.SunspecServer(FerroampDevice()); "
-         "assert 'mqtt' not in sys.modules; assert 'paho.mqtt.client' not in sys.modules"],
+         "assert 'ferroamp_sunspec.mqtt' not in sys.modules; "
+         "assert 'aiomqtt' not in sys.modules; assert 'paho.mqtt.client' not in sys.modules"],
         cwd=Path(__file__).parent, capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stderr

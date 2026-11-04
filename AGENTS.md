@@ -2,10 +2,12 @@
 
 ## Architecture
 
+- Application modules live in the `ferroamp_sunspec` package; root bridge,
+  server, and MQTT scripts are compatibility entry points.
 - Keep the SunSpec core independent of MQTT: `device.py` owns library-backed
   models and atomic register snapshots; `server.py` supplies Modbus transport;
   `telemetry.py` maps Ferroamp payloads; `mqtt.py` handles async delivery;
-  `ferroamp_sunspec.py` wires the components together.
+  `bridge.py` wires the components together.
 - Reuse pysunspec2 definitions, offsets, encoding, and unavailable sentinels.
   Do not introduce handwritten model layouts or vendor emulation to accommodate
   a client without verified requirements.
@@ -44,13 +46,34 @@
 - Use a distinct application logger such as `ferroamp.mqtt`: aiomqtt sets the
   logger named `mqtt` to WARNING, suppressing application INFO messages there.
 
+## Configuration and MQTT transport
+
+- All three entry points use `configuration.parse_configuration()`. Preserve
+  CLI > environment > `_FILE` contents > built-in default precedence.
+  Environment keys are uppercase argument destinations. Environment and file
+  values satisfy required arguments; overridden files are not read.
+- `_FILE` values are UTF-8 text with trailing CR/LF removed, not other
+  whitespace. Report read and validation errors without exposing contents.
+- The application does not load dotenv files. The Compose sample uses
+  `env_file: .env` to populate the container environment; its explicit
+  `environment` entries override values from that file.
+- MQTT broker addresses accept bare hosts, `mqtt://`, and `mqtts://`.
+  Only `mqtts://` enables TLS, with certificate and hostname verification.
+  Either username or password requires TLS; reject plaintext authentication
+  before connecting. Do not log credentials or accept URI userinfo.
+- Preserve port selection: explicit port option > URI port > scheme default
+  (1883 for plaintext, 8883 for TLS). Keep MQTT transport independent of SunSpec.
+
 ## Validation
 
-- Install dependencies with `pip install -r requirements.txt` in a virtual
-  environment. Respect dependency API bounds; upgrades require adapting and
+- Install dependencies with `uv sync --locked`. Maintain dependencies in
+  `pyproject.toml` and regenerate `uv.lock` using `uv lock`.
+  Respect dependency API bounds; upgrades require adapting and
   testing the transport, not merely removing upper bounds.
-- Run `python -m pytest -q`; target related test files for focused changes.
+- Run `uv run --locked pytest -q`; target related test files for focused changes.
   Tests use loopback TCP and do not require Ferroamp hardware or an MQTT broker.
+- The TLS loopback integration test requires `openssl` to generate its
+  certificate and skips when the executable is unavailable.
 - Mapping changes should cover units, import/export directions, unavailable
   points, and real pysunspec2 TCP readback. Update the related README notes.
 - Documentation-only edits do not require Python tests; check formatting with

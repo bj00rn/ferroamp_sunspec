@@ -12,16 +12,16 @@ run independently, without MQTT or Ferroamp hardware.
 
 ## Architecture
 
-- [device.py](device.py): transport-independent SunSpec device and Ferroamp
+- [device.py](ferroamp_sunspec/device.py): transport-independent SunSpec device and Ferroamp
   profile. Uses **pysunspec2** model definitions, model/point objects, register
   offsets, type encoding, and not-implemented values. There are no handwritten
   model layouts or payload builders.
-- [server.py](server.py): read-only Modbus TCP transport using **pymodbus**.
+- [server.py](ferroamp_sunspec/server.py): read-only Modbus TCP transport using **pymodbus**.
   pysunspec2 provides the SunSpec data model and client, but not a TCP server.
-- [telemetry.py](telemetry.py): Ferroamp ExtApi payload-to-point mapping.
-- [mqtt.py](mqtt.py): asyncio-native MQTT connection, subscription, and raw
+- [telemetry.py](ferroamp_sunspec/telemetry.py): Ferroamp ExtApi payload-to-point mapping.
+- [mqtt.py](ferroamp_sunspec/mqtt.py): asyncio-native MQTT connection, subscription, and raw
   message delivery using **aiomqtt**.
-- [ferroamp_sunspec.py](ferroamp_sunspec.py): application wiring and lifecycle.
+- [bridge.py](ferroamp_sunspec/bridge.py): application wiring and lifecycle.
 
 The default chain contains Common model **1**, three-phase inverter model
 **113**, wye-connected AC meter model **213**, and the end marker. The inverter
@@ -42,13 +42,31 @@ observe different updates.
 
 ## Installation
 
-Requires Python 3.11 or newer.
+Requires Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
+From a checkout, install the package and development dependencies using the
+committed lockfile:
 
 ```sh
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
+uv sync --locked
+uv run ferroamp-sunspec --help
 ```
+
+For a runtime-only environment, use `uv sync --locked --no-dev`. The installed
+commands are `ferroamp-sunspec` (bridge), `ferroamp-sunspec-server` (standalone
+server), and `ferroamp-mqtt-listener` (raw MQTT listener). Run them through
+`uv run`, or directly after activating `.venv`.
+
+`python -m ferroamp_sunspec` also starts the bridge. The root scripts
+`ferroamp_sunspec.py`, `server.py`, and `mqtt.py` remain compatibility entry
+points. Library imports now use the `ferroamp_sunspec` namespace.
+
+Build wheel and source distributions with `uv build`. To install a built
+wheel as an isolated CLI tool, use
+`uv tool install dist/ferroamp_sunspec-0.1.0-py3-none-any.whl`.
+Project metadata and dependencies live in `pyproject.toml`; after changing
+dependencies, run `uv lock` and commit the updated `uv.lock`.
+`requirements.txt` remains a compatibility installer for `pip install -r
+requirements.txt` from a checkout; it does not use uv's lockfile.
 
 The pysunspec2 version is pinned because its unavailable float encoding is
 important for interoperability. pymodbus is constrained to its supported 3.8 API.
@@ -63,14 +81,52 @@ docker run --rm -e MQTT_HOST=192.0.2.10 -p 1502:502 ferroamp-sunspec
 ```
 
 Configure the bridge using the environment variables described below, or append
-CLI options, for example `ferroamp-sunspec --log-level DEBUG`. The default
+CLI options, for example:
+
+```sh
+docker run --rm -e MQTT_HOST=192.0.2.10 -p 1502:502 ferroamp-sunspec --log-level DEBUG
+```
+
+The default
 container Modbus port is 502; if changing `MODBUS_PORT`, adjust the container
 side of the port mapping too.
+
+Docker Compose and Swarm secrets are supported through `_FILE` variables for
+every configuration option, for example
+`MQTT_HOST_FILE=/run/secrets/mqtt_host`. Mount the secret file and set the
+variable to its path; secret files are not discovered automatically.
+Precedence is **CLI > environment > file > defaults**. Files contain UTF-8
+text with trailing line endings removed. See
+[Environment configuration](#environment-configuration) for a mount example
+and validation details.
+
+For example, `--mqtt-host cli-broker` overrides `MQTT_HOST=env-broker`,
+which in turn overrides the contents of `MQTT_HOST_FILE`. Only the
+highest-priority source is used; an invalid value produces an error rather
+than falling back to a lower-priority source. An overridden `_FILE` path is
+not read, even if it is missing or unreadable.
+
+### Docker Compose
+
+[compose.example.yaml](compose.example.yaml) builds the bridge locally and
+publishes Modbus TCP on port 1502. Create a `.env` file alongside the Compose
+file with uppercase configuration names:
+
+```dotenv
+MQTT_HOST=mqtts://broker.example.com
+MQTT_USERNAME=bridge
+MQTT_PASSWORD_FILE=/run/secrets/mqtt_password
+```
+
+```sh
+docker compose -f compose.example.yaml up -d --build
+docker compose -f compose.example.yaml logs -f
+```
 
 ## Standalone server (no MQTT)
 
 ```sh
-python server.py --host 127.0.0.1 --port 1502 --trace-modbus
+uv run ferroamp-sunspec-server --host 127.0.0.1 --port 1502 --trace-modbus
 ```
 
 This serves device identity and unavailable telemetry until values are provided
@@ -79,8 +135,8 @@ programmatically:
 ```python
 import asyncio
 
-from device import FerroampDevice
-from server import SunspecServer
+from ferroamp_sunspec.device import FerroampDevice
+from ferroamp_sunspec.server import SunspecServer
 
 
 async def main():
@@ -108,7 +164,7 @@ register snapshot; use `update_points()`.
 ## MQTT bridge
 
 ```sh
-python ferroamp_sunspec.py \
+uv run ferroamp-sunspec \
   --mqtt-host 192.0.2.10 \
   --mqtt-port 1883 \
   --mqtt-topic extapi/data/ehub \
@@ -116,7 +172,54 @@ python ferroamp_sunspec.py \
   --trace-modbus
 ```
 
-Both entry points accept `--base-addr` (default **40000**) and `--unit-id`
+For MQTT username/password authentication, the bridge accepts
+`--mqtt-username` and `--mqtt-password`, or `MQTT_USERNAME` and `MQTT_PASSWORD`.
+Prefer `MQTT_USERNAME_FILE` and `MQTT_PASSWORD_FILE` with mounted secrets to
+avoid putting credentials in shell history or process arguments. For example:
+
+```sh
+docker run --rm \
+  --mount type=bind,src=/absolute/path/mqtt_password,dst=/run/secrets/mqtt_password,readonly \
+  -e MQTT_HOST=mqtts://broker.example.com -e MQTT_USERNAME=bridge \
+  -e MQTT_PASSWORD_FILE=/run/secrets/mqtt_password \
+  -p 1502:502 ferroamp-sunspec
+```
+
+The raw MQTT listener uses `--username` / `--password`, `USERNAME` / `PASSWORD`,
+and `USERNAME_FILE` / `PASSWORD_FILE`. Authentication is optional; omitting
+credentials preserves anonymous connections. Supplying either a username or
+password requires an `mqtts://` URI; authentication over unencrypted MQTT is
+rejected before connecting, including when credentials come from secret files.
+
+### MQTT transport and TLS
+
+`--mqtt-host` (`MQTT_HOST` / `MQTT_HOST_FILE`) accepts a bare hostname,
+`mqtt://host[:port]`, or `mqtts://host[:port]`. The raw listener's `--broker`
+(`BROKER` / `BROKER_FILE`) accepts the same forms.
+
+- Bare hostnames and `mqtt://` use unencrypted TCP, default port **1883**.
+- `mqtts://` enables TLS, default port **8883**, with certificate-chain and
+  hostname verification using the system trust store. TLS is never inferred
+  from the port number alone.
+- An explicit `--mqtt-port` / `MQTT_PORT` / `MQTT_PORT_FILE` overrides the URI
+  port; the raw listener uses `--port` / `PORT` / `PORT_FILE`.
+- Credentials belong in the authentication options, not URI userinfo.
+  Topic paths, queries, and fragments are not supported in broker URIs.
+
+```sh
+MQTT_HOST=mqtts://broker.example.com \
+MQTT_USERNAME=bridge \
+MQTT_PASSWORD_FILE=/run/secrets/mqtt_password \
+uv run ferroamp-sunspec
+```
+
+For private certificate authorities, supply a PEM CA bundle through Python's
+`SSL_CERT_FILE` environment variable (mount it read-only when using Docker).
+This standard TLS variable is not an application argument and does not have a
+`_FILE` counterpart. Certificate verification cannot be disabled through the
+application configuration. Use unencrypted MQTT only on a trusted network.
+
+The bridge and standalone Modbus server accept `--base-addr` (default **40000**) and `--unit-id`
 (default **1**, range 1..247). The bridge accepts `--modbus-host`; the standalone
 server accepts `--host`. The default bind address is `0.0.0.0`, and the default
 TCP port is 502, which may require elevated privileges.
@@ -142,7 +245,7 @@ and a log level of INFO or DEBUG.
 ### Environment configuration
 
 All three entry points also read arguments from environment variables.
-Precedence is **command line > environment > built-in
+Precedence is **command line > environment > environment file > built-in
 defaults**. Variable names are the uppercase argument names with hyphens
 replaced by underscores, for example `MQTT_HOST`, `MODBUS_PORT`,
 `STALE_TIMEOUT`, `BASE_ADDR`, `UNIT_ID`, `LOG_LEVEL`, and `TRACE_MODBUS`.
@@ -157,14 +260,36 @@ export MODBUS_PORT=1502
 export STALE_TIMEOUT=5
 export LOG_LEVEL=INFO
 export TRACE_MODBUS=false
-python ferroamp_sunspec.py
+uv run ferroamp-sunspec
 ```
 
-Run `python ferroamp_sunspec.py` to use these settings, or override individual
-values, for example `python ferroamp_sunspec.py --log-level DEBUG`.
+Run `uv run ferroamp-sunspec` to use these settings, or override individual
+values, for example `uv run ferroamp-sunspec --log-level DEBUG`.
 Boolean variables accept `true/false`, `yes/no`, `on/off`, or `1/0`,
 case-insensitively. Invalid numeric, boolean, or log-level configuration is
 reported as an argument error. Dotenv files are not loaded automatically.
+
+Every configuration variable also supports a `_FILE` suffix, for example
+`MQTT_HOST_FILE=/run/secrets/mqtt_host` or
+`MODBUS_PORT_FILE=/run/secrets/modbus_port`. This works for strings, numbers,
+booleans, and log levels across all three entry points. Files must contain
+UTF-8 text; trailing line endings are removed, while other whitespace is
+preserved. A direct environment value takes precedence over its `_FILE`
+counterpart, and CLI options override both. Files overridden this way are not
+read. Unreadable files or invalid values cause an argument error without
+printing file contents.
+
+For example, mount an existing secret file into a Docker container:
+
+```sh
+docker run --rm \
+  --mount type=bind,src=/absolute/path/mqtt_host,dst=/run/secrets/mqtt_host,readonly \
+  -e MQTT_HOST_FILE=/run/secrets/mqtt_host \
+  -p 1502:502 ferroamp-sunspec
+```
+
+Docker Compose or Swarm secrets mounted under `/run/secrets` work the same way;
+the application reads only paths explicitly configured through `_FILE`.
 
 The bridge consumes MQTT messages directly on the asyncio event loop, with no
 application-managed MQTT worker thread or Paho callbacks. The Modbus server
@@ -363,7 +488,7 @@ Reads overlapping unavailable non-stale points are logged at DEBUG instead;
 this includes unsupported or never-populated measurements. Enable DEBUG for
 the server logger to see them.
 Override the interval with `--stale-timeout SECONDS`
-on `ferroamp_sunspec.py`. A partial message refreshes only the points it
+on `ferroamp-sunspec`. A partial message refreshes only the points it
 contains; omitted fields keep their current value until they expire. Standalone
 users of `SunspecDevice` do not get automatic expiration.
 
@@ -453,8 +578,8 @@ duplicate trace lines do not necessarily mean duplicate network requests.
 ## Verification
 
 ```sh
-python -m pytest -q
-python client.py 127.0.0.1 --port 1502
+uv run --locked pytest -q
+uv run python client.py 127.0.0.1 --port 1502
 ```
 
 Tests cover library-defined layouts and unavailable values, atomic updates,

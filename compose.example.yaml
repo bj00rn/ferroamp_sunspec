@@ -1,0 +1,22 @@
+services:
+  ferroamp-sunspec:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      #MQTT_HOST: mqtts://broker.example.com
+      #MQTT_USERNAME: bridge
+      #MQTT_PASSWORD_FILE: /run/secrets/mqtt_password
+      #TRACE_MODBUS: TRUE
+      MODBUS_PORT: "1502"
+      LOG_LEVEL: INFO
+      STALE_TIMEOUT: "5"
+    ports:
+      - "1502:1502"
+    #secrets:
+    #  - mqtt_password
+
+#secrets:
+#  mqtt_password:
+#    file: ./secrets/mqtt_password
