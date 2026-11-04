@@ -1,159 +1,75 @@
-import asyncio
-import json
-import logging
+"""Async MQTT transport, independent of telemetry decoding and SunSpec."""
+
 import argparse
-from paho.mqtt import client as mqtt
+import asyncio
+from collections.abc import Awaitable, Callable
+import logging
+
+import aiomqtt
+
+from configuration import parse_configuration
+log = logging.getLogger("ferroamp.mqtt")
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-log = logging.getLogger(__name__)
-
-
-class BaseMqttListener:
-    def __init__(self, broker, port, topic, on_connect=None, on_message=None):
-        """
-        Initialize the MQTT listener.
-
-        Args:
-            broker (str): The MQTT broker address.
-            port (int): The MQTT broker port.
-            on_connect (function): Custom on_connect callback function.
-            on_message (function): Custom on_message callback function.
-        """
+class FerroampExtApiListener:
+    def __init__(
+        self,
+        broker: str,
+        port: int = 1883,
+        topic: str = "extapi/data/ehub",
+        client_id: str | None = None,
+    ):
         self.broker = broker
         self.port = port
         self.topic = topic
-        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self.client_id = client_id
 
-        # Assign custom callbacks or use default implementations
-        self._on_connect = on_connect
-        self._on_message = on_message
-
-        # Set up the MQTT client callbacks
-        self.client.on_connect = self.on_connect
-        self.client.on_message = self.on_message
-
-        # Create an asyncio event loop
-        self.loop = asyncio.get_event_loop()
-        self.task = None
-
-    def connect(self):
-        """
-        Connect to the MQTT broker.
-        """
-        log.info(f"Connecting to MQTT broker at {self.broker}:{self.port}...")
-        self.client.connect(self.broker, self.port)
-        self.client.subscribe(self.topic)
-
-    def on_connect(self, client, userdata, flags, reason_code, properties):
-        """
-        Callback for when the client connects to the broker.
-        """
-        if reason_code.is_failure:
-            print(f"Failed to connect: {reason_code}. loop_forever() will retry connection")
-        else:
-            client.subscribe(self.topic)
-            # we should always subscribe from on_connect callback to be sure
-            # our subscribed is persisted across reconnections.
-        
-        # Call the custom on_connect callback if provided
-        if self._on_connect:
-            self._on_connect(client, userdata, flags, reason_code, properties)
-
-    def on_message(self, client, userdata, msg):
-        """
-        Callback for when a message is received.
-        """
-        log.debug(f"Message received on topic {msg.topic}: {msg.payload.decode()}")
-        try:
-            # Parse the JSON payload
-            data = json.loads(msg.payload.decode())
-            log.debug(f"Processed message data: {data}")
-        except json.JSONDecodeError as e:
-            log.error(f"Failed to decode JSON payload: {e}")
-
-        # Call the custom on_message callback if provided
-        if self._on_message:
-            self._on_message(client, userdata, msg)
-
-    async def subscribe(self, topic):
-        """
-        Subscribe to a topic asynchronously.
-
-        Args:
-            topic (str): The MQTT topic to subscribe to.
-        """
-        log.info(f"Subscribing to topic: {topic}")
-        await asyncio.get_event_loop().run_in_executor(None, self.client.subscribe, topic)
-
-    async def loop_forever(self):
-        """
-        Start the loop to process network traffic asynchronously.
-        """
-        log.info("Starting MQTT loop...")
-        await asyncio.get_event_loop().run_in_executor(None, self.client.loop_forever)
-
-
-class FerroampExtApiListener(BaseMqttListener):
-    def __init__(self, broker, port, topic="extapi/data/ehub", on_connect=None, on_message=None):
-        """
-        Initialize the FerroampExtApiListener.
-
-        Args:
-            client_id (str): The MQTT client ID.
-            broker (str): The MQTT broker address.
-            port (int): The MQTT broker port.
-        """
-        super().__init__(broker, port, topic, on_connect, on_message)
+    async def run(self, on_message: Callable[[aiomqtt.Message], Awaitable[None]]) -> None:
+        """Receive messages until cancelled, reconnecting after MQTT failures."""
+        while True:
+            try:
+                async with aiomqtt.Client(
+                    hostname=self.broker,
+                    port=self.port,
+                    identifier=self.client_id,
+                ) as client:
+                    log.info("Connected broker %s:%s", self.broker, self.port)
+                    await client.subscribe(self.topic)
+                    log.info("Subscribed to MQTT topic %s at %s:%s",
+                             self.topic, self.broker, self.port)
+                    async for message in client.messages:
+                        await on_message(message)
+            except aiomqtt.MqttError as exc:
+                log.warning("MQTT connection failed: %s; retrying in 5 seconds", exc)
+                await asyncio.sleep(5)
 
 
 async def main():
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Test the FerroampExtApiListener.")
+    parser = argparse.ArgumentParser(description="Listen to Ferroamp ExtApi messages.")
+    parser.add_argument("--broker", required=True)
+    parser.add_argument("--port", type=int, default=1883)
+    parser.add_argument("--client_id", default="ferroamp_listener")
+    parser.add_argument("--topic", default="extapi/data/ehub")
     parser.add_argument(
-        "--broker",
-        type=str,
-        required=True,
-        help="The MQTT broker address (e.g., 'mqtt.example.com').",
+        "--log-level", type=str.upper, default="INFO",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+        help="logging threshold (default: INFO)",
     )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=1883,
-        help="The MQTT broker port (default: 1883).",
-    )
-    parser.add_argument(
-        "--client_id",
-        type=str,
-        default="ferroamp_listener",
-        help="The MQTT client ID (default: 'ferroamp_listener').",
-    )
-    parser.add_argument(
-        "--topic",
-        type=str,
-        default="extapi/data/ehub",
-        help="The MQTT topic to subscribe to (default: 'extapi/data/ehub').",
-    )
-    args = parser.parse_args()
+    args = parse_configuration(parser)
+    logging.basicConfig(level=args.log_level)
+    logging.getLogger().setLevel(args.log_level)
 
-    # Initialize the FerroampExtApiListener
-    mqtt_listener = FerroampExtApiListener(
-        broker=args.broker,
-        port=args.port,
+    async def on_message(message: aiomqtt.Message) -> None:
+        log.info("Message on %s: %r", message.topic, message.payload)
+
+    listener = FerroampExtApiListener(
+        broker=args.broker, port=args.port, topic=args.topic, client_id=args.client_id,
     )
-
-    # Connect to the MQTT broker and subscribe to the topic
-    mqtt_listener.connect()
-    await mqtt_listener.subscribe(args.topic)
-
-    # Start the MQTT loop
-    await mqtt_listener.loop_forever()
+    await listener.run(on_message)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
