@@ -1,7 +1,14 @@
 # Ferroamp ExtApi -> SunSpec Modbus TCP
 
-Expose Ferroamp telemetry as a SunSpec Modbus TCP device. The SunSpec core can
-also run independently, without MQTT or Ferroamp hardware.
+Developed for Solar PV integration with Nibe S-series heat pumps that support SunSpec Modbus TCP.
+
+Bridge Ferroamp EnergyHub MQTT telemetry to SunSpec Modbus TCP so compatible
+clients can read inverter production and grid
+import/export measurements. 
+
+Production and total measured consumption displays have been verified on a
+NIBE S1256. SunSpec core can also
+run independently, without MQTT or Ferroamp hardware.
 
 ## Architecture
 
@@ -21,6 +28,10 @@ The default chain contains Common model **1**, three-phase inverter model
 and grid meter remain separate so their readings are not conflated. Model
 lengths, field order, types, and scale factors come from pysunspec2's bundled
 definitions.
+
+The Common model's device name (`Energyhub 14`), version (`1`), and serial
+number (`123456789`) are hardcoded profile placeholders, not discovered
+EnergyHub identity. The name does not establish an inverter power rating.
 
 Unpopulated measurements, operating states, and event flags are exposed as
 SunSpec **not implemented**, not fabricated zero readings. Updates are validated
@@ -197,7 +208,8 @@ external/grid-side measurements.
 | `wextconsq.L1/L2/L3` | - | `TotWhImpPhA/B/C`, `TotWhImp` | Grid consumption/import, mJ / 3,600,000 -> Wh |
 | `udc.pos`, `udc.neg` | `DCV` | - | DC-link voltage span: pos - neg, V |
 
-The required `sext.val` maps directly to model 213 `VA`. The API does not
+When present, `sext.val` maps directly to model 213 `VA`; partial messages
+without it are accepted. The API does not
 provide phase-specific apparent power, so model 213 `VAphA/B/C` remain
 unavailable; they are not estimated from `ul × iext`. The revision E example's
 `ul × iext` phase products sum to 2442.46 VA, while `sext` is 2435.31 VA.
@@ -337,8 +349,11 @@ points. These unavailable-point notes describe the MQTT mapping: callers of
 `update_points()` may explicitly supply supported SunSpec points when they have
 an authoritative source for their values.
 
-The MQTT bridge expires each mapped point independently after five
-seconds without a valid update by default. Expiration writes the SunSpec
+The MQTT bridge makes each mapped point eligible for expiration after five
+seconds without a valid update by default. A periodic check runs every
+`min(stale_timeout / 4, 1)` seconds, so with the default timeout expiration
+normally occurs between five and six seconds after the last valid update;
+event-loop delays can extend this. Expiration writes the SunSpec
 not-implemented value and logs a warning; the next valid update restores the
 point and logs recovery.
 Each Modbus read overlapping an expired point also logs a warning with the
@@ -368,7 +383,7 @@ wire addresses for this server's default model chain and base address 40000.
 | Model | Points read | Start address | Register count | MQTT mapping |
 |---|---|---|---|---|
 | 1 Common | `Mn` | 40004 | 16 | Ferroamp manufacturer identity |
-| 1 Common | `SN` | 40052 | 16 | Profile serial number |
+| 1 Common | `SN` | 40052 | 16 | Hardcoded placeholder serial number |
 | 113 inverter | `W` | 40092 | 2 | Negated sum of `pinv` phases; positive for generation |
 | 113 inverter | `WH` | 40102 | 2 | Sum of `winvprodq` phases, converted to Wh |
 | 113 inverter | `DCV` | 40106 | 2 | `udc.pos - udc.neg` |
@@ -393,7 +408,11 @@ unnecessary in other configurations.
 
 ### NIBE energy-meter configuration and display observations
 
-On the tested NIBE S1256 with firmware 4.14.6, set **menu 4.2.2 > Energy
+
+On the tested NIBE S1256 with firmware 4.14.6:
+Enable and configure the **Modbus PV** option in the NIBE menu **7.5.12.1** to enable SunSpec Modbus TCP integration and choose **SunSpec** as the protocol.
+
+In the NIBE menu, navigate to **4.2.2 > Energy
 meter > Smart meter** to select the external smart meter as the energy-meter
 source. After selecting this option, the user confirmed that "total measured
 consumption" displays correctly. The installation was initially missing this
