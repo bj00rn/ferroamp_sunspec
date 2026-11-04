@@ -73,6 +73,10 @@ important for interoperability. pymodbus is constrained to its supported 3.8 API
 
 ## Docker
 
+For Docker Compose, use [compose.example.yaml](compose.example.yaml), which
+builds locally, reads configuration from `.env`, and publishes Modbus on port
+1502. See [Docker Compose](#docker-compose) below for setup and optional secrets.
+
 Build and run the Alpine-based MQTT bridge:
 
 ```sh
